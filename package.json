@@ -22,6 +22,8 @@
     "lint:fix": "biome check --write .",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
+    "pretest": "npm run build",
+    "pretest:coverage": "npm run build",
     "prepublishOnly": "npm run typecheck && npm run lint && npm run test && npm run build",
     "ci": "npm run typecheck && npm run lint && npm run test:coverage && npm run build && npm pack --dry-run"
   },
