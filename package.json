@@ -1,0 +1,46 @@
+{
+  "name": "dglab-mcp",
+  "version": "0.1.0",
+  "description": "Local MCP server bridging desktop AI tools to DG-LAB e-stim hardware through the DG-LAB 4 V4 WebSocket relay, with a hardware safety enforcer.",
+  "type": "module",
+  "license": "GPL-3.0-only",
+  "bin": {
+    "dglab-mcp": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node scripts/make-bin-executable.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "prepublishOnly": "npm run typecheck && npm run lint && npm run test && npm run build",
+    "ci": "npm run typecheck && npm run lint && npm run test:coverage && npm run build && npm pack --dry-run"
+  },
+  "dependencies": {
+    "@dg-kit/core": "^1.16.3",
+    "@dg-kit/waveforms": "^1.16.3",
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "dglab-kit": "^1.0.5",
+    "qrcode": "^1.5.4",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.11",
+    "@types/node": "^24.0.0",
+    "@types/qrcode": "^1.5.5",
+    "@types/ws": "^8.18.1",
+    "@vitest/coverage-v8": "^4.1.11",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.11",
+    "ws": "^8.21.0"
+  }
+}
