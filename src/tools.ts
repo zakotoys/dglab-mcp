@@ -137,11 +137,11 @@ export function registerTools(server: McpServer, service: DglabService, config: 
         const result = await service.connect();
         return {
           content: [
+            { type: "image", data: result.qrBase64, mimeType: "image/png" },
             {
               type: "text",
               text: `Relay session ${result.session.state}. Pair the DG-LAB 4 app by scanning the QR code or opening: ${result.session.sessionLink}`,
             },
-            { type: "image", data: result.qrBase64, mimeType: "image/png" },
           ],
           structuredContent: {
             ok: true,

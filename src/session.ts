@@ -63,7 +63,7 @@ export class DglabSession {
 
   get appSocketUrl(): string | null {
     const targetId = this.targetId;
-    return targetId === null ? null : `${this.relayUrl}/?tid=${targetId}`;
+    return targetId === null ? null : `${this.relayUrl}?tid=${encodeURIComponent(targetId)}`;
   }
 
   get sessionLink(): string | null {

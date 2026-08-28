@@ -102,8 +102,9 @@ describe("MCP server over in-memory transport", () => {
     const structured = result.structuredContent as Record<string, unknown>;
     expect(structured.ok).toBe(true);
     expect(structured.state).toBe("waiting_for_peer");
-    expect(String(structured.appSocketUrl)).toMatch(/^ws:\/\/127\.0\.0\.1:\d+\/v4\/\?tid=/);
+    expect(String(structured.appSocketUrl)).toMatch(/^ws:\/\/127\.0\.0\.1:\d+\/v4\?tid=/);
     expect(String(structured.sessionLink)).toContain("dungeon-lab.cn");
+    expect(result.content[0]?.type).toBe("image");
     const image = result.content.find((block) => block.type === "image") as Record<string, unknown>;
     expect(image.mimeType).toBe("image/png");
     const png = Buffer.from(image.data as string, "base64");
