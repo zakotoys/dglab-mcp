@@ -72,6 +72,7 @@ interface DownloadedFile extends RemoteFile {
   content: Buffer;
   sha256: string;
   managedPath?: string;
+  reservedPath?: string;
 }
 
 export interface PresetSyncResult {
@@ -125,11 +126,14 @@ export async function syncPreset(sourceInput: string, pulseDir: string): Promise
       reused += 1;
       continue;
     }
+    const previousPathIsShared =
+      previous !== undefined && manifestPathReferenceCount(manifest, previous.path) > 1;
     downloads.push({
       ...remoteFile,
       content,
       sha256: contentSha256,
-      managedPath: previous?.path,
+      managedPath: previousPathIsShared ? undefined : previous?.path,
+      reservedPath: previousPathIsShared ? previous.path : undefined,
     });
   }
 
@@ -140,6 +144,7 @@ export async function syncPreset(sourceInput: string, pulseDir: string): Promise
       download.content,
       download.sha256,
       download.managedPath,
+      download.reservedPath,
     );
     nextFiles.push({ url: download.url.href, path: relativePath, sha256: download.sha256 });
   }
@@ -154,6 +159,18 @@ export async function syncPreset(sourceInput: string, pulseDir: string): Promise
     reused,
     files: nextFiles.length,
   };
+}
+
+function manifestPathReferenceCount(manifest: Manifest, managedPath: string): number {
+  let references = 0;
+  for (const source of Object.values(manifest.sources)) {
+    for (const file of source.files) {
+      if (file.path === managedPath) {
+        references += 1;
+      }
+    }
+  }
+  return references;
 }
 
 function sourceKeyFor(source: ParsedSource): string {
@@ -772,6 +789,7 @@ async function storePulse(
   content: Buffer,
   hash: string,
   managedPath?: string,
+  reservedPath?: string,
 ): Promise<string> {
   if (managedPath !== undefined) {
     const filePath = resolveManifestPath(pulseDir, managedPath);
@@ -783,6 +801,11 @@ async function storePulse(
   let candidate = requestedPath;
   let suffix = 0;
   while (true) {
+    if (candidate === reservedPath) {
+      suffix += 1;
+      candidate = withHashSuffix(requestedPath, hash, suffix);
+      continue;
+    }
     const filePath = resolveManifestPath(pulseDir, candidate);
     try {
       const stat = await fs.stat(filePath);

@@ -191,7 +191,7 @@ function isWellKnownUrl(input: string): boolean {
     if (["github.com", "gitlab.com", "raw.githubusercontent.com"].includes(parsed.hostname)) {
       return false;
     }
-    return !input.endsWith(".git");
+    return !looksLikeGitSource(input);
   } catch {
     return false;
   }

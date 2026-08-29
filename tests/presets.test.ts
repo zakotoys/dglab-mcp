@@ -334,6 +334,52 @@ describe("syncPreset", () => {
     expect(await fs.readFile(path.join(pulseDir, collision!), "utf8")).toBe(PULSE_B);
   });
 
+  it("forks a shared managed path when one local source changes", async () => {
+    const firstSource = await fs.mkdtemp(path.join(os.tmpdir(), "dglab-local-first-"));
+    const secondSource = await fs.mkdtemp(path.join(os.tmpdir(), "dglab-local-second-"));
+    tmpDirs.push(firstSource, secondSource);
+    await fs.writeFile(path.join(firstSource, "same.pulse"), PULSE_A);
+    await fs.writeFile(path.join(secondSource, "same.pulse"), PULSE_A);
+    const pulseDir = await makePulseDir();
+
+    await syncPreset(firstSource, pulseDir);
+    await syncPreset(secondSource, pulseDir);
+    await fs.writeFile(path.join(firstSource, "same.pulse"), PULSE_B);
+    await syncPreset(firstSource, pulseDir);
+
+    const pulseBHash = createHash("sha256").update(PULSE_B).digest("hex").slice(0, 12);
+    expect(await fs.readFile(path.join(pulseDir, "same.pulse"), "utf8")).toBe(PULSE_A);
+    expect(await fs.readFile(path.join(pulseDir, `same-${pulseBHash}.pulse`), "utf8")).toBe(
+      PULSE_B,
+    );
+    expect(await syncPreset(secondSource, pulseDir)).toMatchObject({ reused: 1, files: 1 });
+  });
+
+  it("does not reclaim a missing path that another source still references", async () => {
+    const firstSource = await fs.mkdtemp(path.join(os.tmpdir(), "dglab-local-first-"));
+    const secondSource = await fs.mkdtemp(path.join(os.tmpdir(), "dglab-local-second-"));
+    tmpDirs.push(firstSource, secondSource);
+    await fs.writeFile(path.join(firstSource, "same.pulse"), PULSE_A);
+    await fs.writeFile(path.join(secondSource, "same.pulse"), PULSE_A);
+    const pulseDir = await makePulseDir();
+
+    await syncPreset(firstSource, pulseDir);
+    await syncPreset(secondSource, pulseDir);
+    await fs.rm(path.join(pulseDir, "same.pulse"));
+    await fs.writeFile(path.join(firstSource, "same.pulse"), PULSE_B);
+    await syncPreset(firstSource, pulseDir);
+
+    const pulseBHash = createHash("sha256").update(PULSE_B).digest("hex").slice(0, 12);
+    await expect(fs.stat(path.join(pulseDir, "same.pulse"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    expect(await fs.readFile(path.join(pulseDir, `same-${pulseBHash}.pulse`), "utf8")).toBe(
+      PULSE_B,
+    );
+    await syncPreset(secondSource, pulseDir);
+    expect(await fs.readFile(path.join(pulseDir, "same.pulse"), "utf8")).toBe(PULSE_A);
+  });
+
   it.each([
     ["invalid JSON", "not JSON", /invalid preset manifest/],
     ["invalid schema", '{"version":2,"sources":{}}', /invalid preset manifest/],

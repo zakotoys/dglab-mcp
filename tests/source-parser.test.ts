@@ -119,6 +119,14 @@ describe("source-parser", () => {
       type: "git",
       url: "https://git.example.com/owner/repo.git",
     });
+    expect(parseSource("https://git.example.com/owner/repo.git/")).toEqual({
+      type: "git",
+      url: "https://git.example.com/owner/repo.git/",
+    });
+    expect(parseSource("https://git.example.com/owner/repo.git?token=test")).toEqual({
+      type: "git",
+      url: "https://git.example.com/owner/repo.git?token=test",
+    });
     expect(parseSource("ssh://git.example.com/owner/repo.git#develop")).toEqual({
       type: "git",
       url: "ssh://git.example.com/owner/repo.git",
