@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { createRequire } from "node:module";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { type Config, loadConfig } from "./config.js";
@@ -6,7 +7,8 @@ import { log } from "./log.js";
 import { DglabService } from "./service.js";
 import { registerTools } from "./tools.js";
 
-const SERVER_VERSION = "0.1.0";
+const require = createRequire(import.meta.url);
+const SERVER_VERSION = (require("../package.json") as { version: string }).version;
 const SHUTDOWN_BUDGET_MS = 2000;
 
 function loadConfigOrExit(): Config {

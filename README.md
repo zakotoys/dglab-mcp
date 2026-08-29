@@ -189,6 +189,47 @@ npm test            # vitest (unit + integration + MCP)
 npm run lint:fix    # biome autofix
 ```
 
+## Automated npm releases
+
+Releases are published by GitHub Actions from version tags. The workflow runs the
+full CI suite, checks that the tag matches `package.json`, and publishes with npm
+provenance through OpenID Connect (OIDC); no long-lived npm token is stored in
+GitHub.
+
+One-time setup:
+
+1. If `dglab-mcp` does not exist on npm yet, bootstrap the package once from a
+   local terminal while logged in to the npm owner account:
+
+   ```bash
+   npm login
+   npm publish --access public
+   ```
+
+   This is the only manual publish; the command runs the package's
+   `prepublishOnly` checks first.
+2. On npmjs.com, open the `dglab-mcp` package settings and add a **Trusted
+   Publisher** for **GitHub Actions**. Set owner to `zakotoys`, repository to
+   `dglab-mcp`, and workflow filename to `publish.yml`.
+3. Add the `zakotoys` npm team as a maintainer of `dglab-mcp` in the package's
+   **Access** settings. Team members then inherit publish and release access.
+4. Ensure the GitHub repository's Actions are enabled and that the default
+   branch is `main`.
+
+To release a version from a clean checkout:
+
+```bash
+npm version patch   # or minor / major; updates package.json and package-lock.json
+git push origin main --follow-tags
+```
+
+Pushing the generated `vX.Y.Z` tag starts the workflow. Monitor it under the
+repository's **Actions** tab; a failed version check or CI run blocks publication.
+The package is public, so users can install it with `npx -y dglab-mcp@latest`.
+The package intentionally remains unscoped; the `zakotoys` npm team owns publish
+access through the package's maintainer permission rather than through an
+`@zakotoys/` rename.
+
 The test suite includes a fake V4 relay and a fake DG-LAB app (`tests/helpers.ts`) that speak the real protocol, so pairing, telemetry, task lifecycles, safety cutoffs, and both in-memory and stdio MCP transports are exercised end to end without hardware.
 
 ### Manual Hardware Checklist
@@ -210,7 +251,7 @@ Before publishing a release, verify manually with **both a Coyote V2 and a Coyot
 
 - V1 controls **Coyote V2/V3 through the DG-LAB 4 V4 relay only**. Legacy V3 relay, direct BLE, HTTP transport, GUI, raw frame exposure, and Opossum output control are intentionally excluded.
 - Pairing sessions and task state are process-local and are **not persisted** across MCP server restarts.
-- Publication credentials and automated npm publishing are outside implementation scope; the produced package is ready for a maintainer-run `npm publish`.
+- Publication uses the GitHub Actions workflow described in [Automated npm releases](#automated-npm-releases).
 
 ## License
 

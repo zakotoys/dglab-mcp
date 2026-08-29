@@ -4,6 +4,17 @@
   "description": "Local MCP server bridging desktop AI tools to DG-LAB e-stim hardware through the DG-LAB 4 V4 WebSocket relay, with a hardware safety enforcer.",
   "type": "module",
   "license": "GPL-3.0-only",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zakotoys/dglab-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/zakotoys/dglab-mcp/issues"
+  },
+  "homepage": "https://github.com/zakotoys/dglab-mcp#readme",
+  "publishConfig": {
+    "access": "public"
+  },
   "bin": {
     "dglab-mcp": "dist/index.js"
   },
