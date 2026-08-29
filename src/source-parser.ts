@@ -237,7 +237,9 @@ export function parseSource(input: string): ParsedSource {
     }
   }
 
-  const githubTreeWithPathMatch = input.match(/github\.com\/([^/]+)\/([^/]+)\/tree\/([^/]+)\/(.+)/);
+  const githubTreeWithPathMatch = input.match(
+    /^https?:\/\/github\.com\/([^/]+)\/([^/]+)\/tree\/([^/]+)\/(.+?)\/?$/,
+  );
   if (githubTreeWithPathMatch) {
     const [, owner, repo, ref, subpath] = githubTreeWithPathMatch;
     return {
@@ -247,7 +249,9 @@ export function parseSource(input: string): ParsedSource {
       subpath: subpath ? sanitizeSubpath(subpath) : subpath,
     };
   }
-  const githubTreeMatch = input.match(/github\.com\/([^/]+)\/([^/]+)\/tree\/([^/]+)$/);
+  const githubTreeMatch = input.match(
+    /^https?:\/\/github\.com\/([^/]+)\/([^/]+)\/tree\/([^/]+)\/?$/,
+  );
   if (githubTreeMatch) {
     const [, owner, repo, ref] = githubTreeMatch;
     return {
@@ -256,7 +260,7 @@ export function parseSource(input: string): ParsedSource {
       ref: ref || fragmentRef,
     };
   }
-  const githubRepoMatch = input.match(/github\.com\/([^/]+)\/([^/]+)/);
+  const githubRepoMatch = input.match(/^https?:\/\/github\.com\/([^/]+)\/([^/]+)(?:\/.*)?$/);
   if (githubRepoMatch) {
     const [, owner, repo] = githubRepoMatch;
     return {
@@ -280,7 +284,7 @@ export function parseSource(input: string): ParsedSource {
       };
     }
   }
-  const gitlabTreeMatch = input.match(/^(https?):\/\/([^/]+)\/(.+?)\/-\/tree\/([^/]+)$/);
+  const gitlabTreeMatch = input.match(/^(https?):\/\/([^/]+)\/(.+?)\/-\/tree\/([^/]+)\/?$/);
   if (gitlabTreeMatch) {
     const [, protocol, hostname, repoPath, ref] = gitlabTreeMatch;
     if (hostname !== "github.com" && repoPath) {
@@ -291,7 +295,7 @@ export function parseSource(input: string): ParsedSource {
       };
     }
   }
-  const gitlabRepoMatch = input.match(/gitlab\.com\/(.+?)(?:\.git)?\/?$/);
+  const gitlabRepoMatch = input.match(/^https?:\/\/gitlab\.com\/(.+?)(?:\.git)?\/?$/);
   if (gitlabRepoMatch) {
     const repoPath = gitlabRepoMatch[1]!;
     if (repoPath.includes("/")) {

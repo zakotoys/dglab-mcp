@@ -1,8 +1,10 @@
+import { execFile as execFileCallback } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import os from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PRESET_MANIFEST_FILE, syncPreset } from "../src/presets.js";
 import { scanPulseDirectory } from "../src/waveforms/catalog.js";
@@ -11,6 +13,7 @@ const PULSE_A = "Dungeonlab+pulse:Alpha=0,0,0,1,1/10-0,50-100";
 const PULSE_B = "Dungeonlab+pulse:Beta=0,0,0,1,1/20-0,75-100";
 const servers: Server[] = [];
 const tmpDirs: string[] = [];
+const execFile = promisify(execFileCallback);
 
 async function makePulseDir(): Promise<string> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "dglab-preset-test-"));
@@ -365,5 +368,171 @@ describe("syncPreset", () => {
     await expect(syncPreset(`${origin}/chunked.pulse`, pulseDir)).rejects.toThrow(
       /response exceeds the 65536-byte limit/,
     );
+  });
+
+  it("imports a single local file from a git source", async () => {
+    const repoDir = await fs.mkdtemp(path.join(os.tmpdir(), "dglab-git-preset-test-"));
+    tmpDirs.push(repoDir);
+    await execFile("git", ["init", "-q", repoDir]);
+    await fs.writeFile(path.join(repoDir, "wave.pulse"), PULSE_A);
+    await execFile("git", ["-C", repoDir, "add", "wave.pulse"]);
+    await execFile("git", [
+      "-C",
+      repoDir,
+      "-c",
+      "user.email=test@example.com",
+      "-c",
+      "user.name=test",
+      "commit",
+      "-qm",
+      "initial",
+    ]);
+    const pulseDir = await makePulseDir();
+    const result = await syncPreset(`file://${repoDir}`, pulseDir);
+    expect(result).toMatchObject({ downloaded: 1, reused: 0, files: 1 });
+    expect(await fs.readFile(path.join(pulseDir, "wave.pulse"), "utf8")).toBe(PULSE_A);
+  });
+
+  it("rejects invalid local files and empty or oversized directories", async () => {
+    const sourceDir = await fs.mkdtemp(path.join(os.tmpdir(), "dglab-local-edge-"));
+    tmpDirs.push(sourceDir);
+    const pulseDir = await makePulseDir();
+    const textFile = path.join(sourceDir, "notes.txt");
+    await fs.writeFile(textFile, "ignored");
+    await expect(syncPreset(textFile, pulseDir)).rejects.toThrow(/does not end in \.pulse/);
+    const emptyDir = path.join(sourceDir, "empty");
+    await fs.mkdir(emptyDir);
+    await expect(syncPreset(emptyDir, pulseDir)).rejects.toThrow(/contains no \.pulse files/);
+    const oversized = path.join(sourceDir, "large.pulse");
+    await fs.writeFile(oversized, "x".repeat(64 * 1024 + 1));
+    await expect(syncPreset(oversized, pulseDir)).rejects.toThrow(/response exceeds/);
+    const manyDir = path.join(sourceDir, "many");
+    await fs.mkdir(manyDir);
+    await Promise.all(
+      Array.from({ length: 101 }, (_, index) =>
+        fs.writeFile(path.join(manyDir, `wave-${index}.pulse`), PULSE_A),
+      ),
+    );
+    await expect(syncPreset(manyDir, pulseDir)).rejects.toThrow(/more than 100/);
+  });
+
+  it("reuses an existing file with the same content and rejects non-pulse downloads", async () => {
+    const { origin } = await startHttpServer((request, response) => {
+      if (request.url?.endsWith("/same.pulse")) response.end(PULSE_A);
+      else response.end("not a pulse");
+    });
+    const pulseDir = await makePulseDir();
+    await syncPreset(`${origin}/alpha/same.pulse`, pulseDir);
+    const result = await syncPreset(`${origin}/gamma/same.pulse`, pulseDir);
+    expect(result.downloaded).toBe(1);
+    expect(result.files).toBe(1);
+    await expect(
+      syncPreset("https://raw.githubusercontent.com/owner/repo/main/README.md", pulseDir),
+    ).rejects.toThrow(/is not a \.pulse file/);
+  });
+
+  it("falls back from GitHub HEAD", async () => {
+    const pulseDir = await makePulseDir();
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes("/git/trees/HEAD")) return new Response("", { status: 404 });
+      if (url.includes("/git/trees/main"))
+        return new Response(JSON.stringify({ truncated: false, tree: [] }));
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    try {
+      await expect(syncPreset("https://github.com/owner/repo", pulseDir)).rejects.toThrow(
+        /contains no \.pulse files/,
+      );
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    } finally {
+      fetchMock.mockRestore();
+    }
+  });
+
+  it.each([
+    ["HTTP failure", new Response("", { status: 500 }), /HTTP 500/],
+    ["invalid JSON", new Response("{", { status: 200 }), /invalid GitHub tree response/],
+    [
+      "invalid schema",
+      new Response(JSON.stringify({ tree: [] }), { status: 200 }),
+      /invalid GitHub tree response/,
+    ],
+    [
+      "truncated tree",
+      new Response(JSON.stringify({ truncated: true, tree: [] }), { status: 200 }),
+      /too large to traverse/,
+    ],
+  ])("rejects a GitHub %s response", async (_name, response, expected) => {
+    const pulseDir = await makePulseDir();
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(response);
+    try {
+      await expect(syncPreset("https://github.com/owner/repo", pulseDir)).rejects.toThrow(expected);
+    } finally {
+      fetchMock.mockRestore();
+    }
+  });
+
+  it("resolves a GitLab default branch and handles project errors", async () => {
+    const pulseDir = await makePulseDir();
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/api/v4/projects/group%2Frepo"))
+        return new Response(JSON.stringify({ default_branch: "develop" }));
+      if (url.includes("/repository/tree"))
+        return new Response(JSON.stringify([{ type: "blob", path: "wave.pulse" }]));
+      if (url.endsWith("/-/raw/develop/wave.pulse")) return new Response(PULSE_A);
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    try {
+      const result = await syncPreset("https://gitlab.com/group/repo", pulseDir);
+      expect(result.files).toBe(1);
+    } finally {
+      fetchMock.mockRestore();
+    }
+    const failingDir = await makePulseDir();
+    const failingFetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response("", { status: 403 }));
+    try {
+      await expect(syncPreset("https://gitlab.com/group/repo", failingDir)).rejects.toThrow(
+        /failed to resolve GitLab preset repository/,
+      );
+    } finally {
+      failingFetch.mockRestore();
+    }
+  });
+
+  it("rejects unsafe directory redirects and malformed links", async () => {
+    const pulseDir = await makePulseDir();
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const response = new Response('<a href="%E0%A4%A.pulse">bad</a>');
+      Object.defineProperty(response, "url", { value: String(input) });
+      return response;
+    });
+    try {
+      await expect(syncPreset("https://example.com/pulses/", pulseDir)).rejects.toThrow(
+        /invalid URL path segment/,
+      );
+    } finally {
+      fetchMock.mockRestore();
+    }
+    const redirectedDir = await makePulseDir();
+    const redirectFetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const response = new Response(
+        String(input).endsWith("/pulses/") ? '<a href="child">child</a>' : "<html></html>",
+      );
+      Object.defineProperty(response, "url", {
+        value: String(input).endsWith("/pulses/") ? String(input) : "https://evil.example/outside/",
+      });
+      return response;
+    });
+    try {
+      await expect(syncPreset("https://example.com/pulses/", redirectedDir)).rejects.toThrow(
+        /redirected outside/,
+      );
+    } finally {
+      redirectFetch.mockRestore();
+    }
   });
 });
