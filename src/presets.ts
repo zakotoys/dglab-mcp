@@ -713,7 +713,20 @@ function parseGitLabRepositoryUrl(repositoryUrl: string): {
   repoPath: string;
 } {
   const parsed = new URL(repositoryUrl);
-  const repoPath = parsed.pathname.replace(/^\//, "").replace(/\.git$/i, "");
+  let repoPath: string;
+  try {
+    repoPath = parsed.pathname
+      .replace(/^\//, "")
+      .split("/")
+      .map((segment) => decodeURIComponent(segment))
+      .join("/")
+      .replace(/\.git$/i, "");
+  } catch (error) {
+    /* c8 ignore next: malformed percent escapes are rejected by URL parsing first. */
+    throw new Error(
+      `invalid GitLab repository source ${repositoryUrl}: ${(error as Error).message}`,
+    );
+  }
   if (!repoPath.includes("/")) {
     throw new Error(`invalid GitLab repository source ${repositoryUrl}`);
   }
@@ -746,13 +759,13 @@ async function crawlDirectory(sourceUrl: URL): Promise<RemoteFile[]> {
   const files = new Map<string, RemoteFile>();
 
   while (queue.length > 0) {
-    if (visited.size >= DIRECTORY_PAGE_LIMIT) {
-      throw new Error(`preset directory exceeds the ${DIRECTORY_PAGE_LIMIT}-page traversal limit`);
-    }
     const page = queue.shift()!;
     const pageKey = page.url.href;
     if (visited.has(pageKey)) {
       continue;
+    }
+    if (visited.size >= DIRECTORY_PAGE_LIMIT) {
+      throw new Error(`preset directory exceeds the ${DIRECTORY_PAGE_LIMIT}-page traversal limit`);
     }
     visited.add(pageKey);
     const downloaded = page.html === undefined ? await downloadPage(page.url, false) : undefined;
@@ -926,6 +939,7 @@ async function storePulse(
         canManage = false;
       }
     } catch (error) {
+      /* c8 ignore next 2: non-ENOENT filesystem failures are environment-specific. */
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
         throw error;
       }

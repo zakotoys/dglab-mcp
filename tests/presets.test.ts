@@ -502,6 +502,28 @@ describe("syncPreset", () => {
     }
   });
 
+  it("encodes GitLab repository paths exactly once", async () => {
+    const pulseDir = await makePulseDir();
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes("/projects/group%2Fmy%20repo/repository/tree")) {
+        return new Response(JSON.stringify([{ type: "blob", path: "wave.pulse" }]));
+      }
+      if (url === "https://gitlab.com/group/my%20repo/-/raw/main/wave.pulse") {
+        return new Response(PULSE_A);
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    try {
+      await expect(
+        syncPreset("https://gitlab.com/group/my%20repo/-/tree/main", pulseDir),
+      ).resolves.toMatchObject({ downloaded: 1, files: 1 });
+      expect(await fs.readFile(path.join(pulseDir, "wave.pulse"), "utf8")).toBe(PULSE_A);
+    } finally {
+      fetchMock.mockRestore();
+    }
+  });
+
   it("resolves the longest GitLab branch name in a tree URL", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
@@ -1160,6 +1182,32 @@ describe("syncPreset", () => {
       await expect(syncPreset("https://example.com/pulses/", pulseDir)).rejects.toThrow(
         /1000-page traversal limit/,
       );
+    } finally {
+      fetchMock.mockRestore();
+    }
+  });
+
+  it("deduplicates queued directory links before enforcing the page limit", async () => {
+    let page = 0;
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/wave.pulse")) {
+        return new Response(PULSE_A);
+      }
+      const current = page++;
+      const duplicate = current <= 1 ? "/pulses/" : `/pulses/${current - 1}/`;
+      const links =
+        current === 999
+          ? `<a href="${duplicate}">duplicate</a><a href="wave.pulse">wave</a>`
+          : `<a href="${duplicate}">duplicate</a><a href="/pulses/${current + 1}/">next</a>`;
+      return new Response(links, { headers: { "content-type": "text/html" } });
+    });
+    const pulseDir = await makePulseDir();
+    try {
+      await expect(syncPreset("https://example.com/pulses/", pulseDir)).resolves.toMatchObject({
+        files: 1,
+      });
+      expect(page).toBe(1000);
     } finally {
       fetchMock.mockRestore();
     }
