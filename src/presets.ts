@@ -91,6 +91,7 @@ export async function syncPreset(sourceInput: string, pulseDir: string): Promise
 
   if (
     source.type !== "local" &&
+    source.type !== "git" &&
     cachedSource !== undefined &&
     cachedSource.kind === "file" &&
     (await sourceIsCurrent(pulseDir, cachedSource))
@@ -114,7 +115,12 @@ export async function syncPreset(sourceInput: string, pulseDir: string): Promise
     const previous = previousFiles.get(url);
     const targetIsCurrent =
       previous !== undefined && (await manifestFileIsCurrent(pulseDir, previous));
-    if (source.type !== "local" && previous !== undefined && targetIsCurrent) {
+    if (
+      source.type !== "local" &&
+      remoteFile.content === undefined &&
+      previous !== undefined &&
+      targetIsCurrent
+    ) {
       nextFiles.push(previous);
       reused += 1;
       continue;

@@ -633,7 +633,27 @@ describe("syncPreset", () => {
     const result = await syncPreset(`file://${repoDir}#main`, pulseDir);
     expect(result).toMatchObject({ downloaded: 1, reused: 0, files: 1 });
     expect(await fs.readFile(path.join(pulseDir, "wave.pulse"), "utf8")).toBe(PULSE_A);
-    expect(await syncPreset(`file://${repoDir}`, await makePulseDir())).toMatchObject({ files: 1 });
+    expect(await syncPreset(`file://${repoDir}#main`, pulseDir)).toMatchObject({
+      downloaded: 0,
+      reused: 1,
+      files: 1,
+    });
+    await fs.writeFile(path.join(repoDir, "wave.pulse"), PULSE_B);
+    await execFile("git", ["-C", repoDir, "add", "wave.pulse"]);
+    await execFile("git", [
+      "-C",
+      repoDir,
+      "-c",
+      "user.email=test@example.com",
+      "-c",
+      "user.name=test",
+      "commit",
+      "-qm",
+      "update",
+    ]);
+    const updated = await syncPreset(`file://${repoDir}#main`, pulseDir);
+    expect(updated).toMatchObject({ downloaded: 1, reused: 0, files: 1 });
+    expect(await fs.readFile(path.join(pulseDir, "wave.pulse"), "utf8")).toBe(PULSE_B);
   });
 
   it("rejects invalid local files and empty or oversized directories", async () => {
