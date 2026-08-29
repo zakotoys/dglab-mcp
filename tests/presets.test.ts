@@ -89,7 +89,9 @@ describe("syncPreset", () => {
     const repaired = await syncPreset(source, pulseDir);
     expect(repaired.downloaded).toBe(1);
     expect(requests).toBe(2);
-    expect(await fs.readFile(path.join(pulseDir, "alpha.pulse"), "utf8")).toBe(PULSE_A);
+    const repairedPath = `alpha-${createHash("sha256").update(PULSE_A).digest("hex").slice(0, 12)}.pulse`;
+    expect(await fs.readFile(path.join(pulseDir, "alpha.pulse"), "utf8")).toBe("locally modified");
+    expect(await fs.readFile(path.join(pulseDir, repairedPath), "utf8")).toBe(PULSE_A);
   });
 
   it("recursively downloads same-origin directory listings and preserves paths", async () => {
@@ -177,6 +179,27 @@ describe("syncPreset", () => {
       code: "ENOENT",
     });
     expect(await fs.readFile(path.join(pulseDir, "second.pulse"), "utf8")).toBe(PULSE_B);
+  });
+
+  it("keeps a reused path when a directory file URL changes", async () => {
+    let version = 1;
+    const { origin } = await startHttpServer((request, response) => {
+      response.setHeader("content-type", request.url === "/library/" ? "text/html" : "text/plain");
+      if (request.url === "/library/") {
+        response.end(`<a href="wave.pulse${version === 1 ? "" : "?v=2"}">wave</a>`);
+      } else if (request.url?.startsWith("/library/wave.pulse")) {
+        response.end(PULSE_A);
+      } else {
+        response.writeHead(404).end();
+      }
+    });
+    const pulseDir = await makePulseDir();
+    const source = `${origin}/library/`;
+
+    await expect(syncPreset(source, pulseDir)).resolves.toMatchObject({ downloaded: 1, files: 1 });
+    version = 2;
+    await expect(syncPreset(source, pulseDir)).resolves.toMatchObject({ downloaded: 1, files: 1 });
+    expect(await fs.readFile(path.join(pulseDir, "wave.pulse"), "utf8")).toBe(PULSE_A);
   });
 
   it("keeps a locally modified file when it disappears from a remote directory", async () => {
@@ -714,6 +737,13 @@ describe("syncPreset", () => {
     const updated = await syncPreset(`file://${repoDir}#main`, pulseDir);
     expect(updated).toMatchObject({ downloaded: 1, reused: 0, files: 1 });
     expect(await fs.readFile(path.join(pulseDir, "wave.pulse"), "utf8")).toBe(PULSE_B);
+
+    const defaultRefDir = await makePulseDir();
+    expect(await syncPreset(`file://${repoDir}`, defaultRefDir)).toMatchObject({
+      downloaded: 1,
+      reused: 0,
+      files: 1,
+    });
   });
 
   it("rejects invalid local files and empty or oversized directories", async () => {
@@ -914,7 +944,8 @@ describe("syncPreset", () => {
         },
       }),
     );
-    await expect(syncPreset(source, cachedDir)).rejects.toThrow();
+    await expect(syncPreset(source, cachedDir)).resolves.toMatchObject({ downloaded: 1, files: 1 });
+    expect(await fs.readFile(path.join(cachedDir, "wave.pulse"), "utf8")).toBe(PULSE_A);
   });
 
   it("reports git clone failures", async () => {
@@ -956,6 +987,21 @@ describe("syncPreset", () => {
       );
     } finally {
       oversizedFetch.mockRestore();
+    }
+  });
+
+  it("reports a missing explicitly requested GitHub ref as an HTTP error", async () => {
+    const pulseDir = await makePulseDir();
+    const missingFetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response("", { status: 404 }));
+    try {
+      await expect(syncPreset("https://github.com/owner/repo#missing", pulseDir)).rejects.toThrow(
+        /HTTP 404/,
+      );
+      expect(missingFetch).toHaveBeenCalledTimes(1);
+    } finally {
+      missingFetch.mockRestore();
     }
   });
 
@@ -1043,6 +1089,32 @@ describe("syncPreset", () => {
     ).rejects.toThrow(/invalid GitLab repository source/);
   });
 
+  it("reports a failed GitLab tree page after the first page", async () => {
+    const pulseDir = await makePulseDir();
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const page = new URL(String(input)).searchParams.get("page");
+      if (page === "1") {
+        return new Response(
+          JSON.stringify(
+            Array.from({ length: 100 }, (_, index) => ({
+              type: "blob",
+              path: `ignore-${index}.txt`,
+            })),
+          ),
+          { headers: { "x-next-page": "2" } },
+        );
+      }
+      return new Response("", { status: 500 });
+    });
+    try {
+      await expect(
+        syncPreset("https://gitlab.com/group/repo/-/tree/main", pulseDir),
+      ).rejects.toThrow(/HTTP 500/);
+    } finally {
+      fetchMock.mockRestore();
+    }
+  });
+
   it("enforces GitLab and HTTP directory file limits", async () => {
     const gitlabDir = await makePulseDir();
     const gitlabFetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(
@@ -1090,6 +1162,68 @@ describe("syncPreset", () => {
       );
     } finally {
       fetchMock.mockRestore();
+    }
+  });
+
+  it("ignores failed and non-HTML child directory links", async () => {
+    const pulseDir = await makePulseDir();
+    const failedResponse = {
+      ok: false,
+      status: 404,
+      url: "",
+      body: null,
+      headers: new Headers(),
+    } as unknown as Response;
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response('<a href="missing">missing</a><a href="missing2">missing</a>'),
+      )
+      .mockResolvedValueOnce(failedResponse)
+      .mockResolvedValueOnce(new Response("", { status: 404 }));
+    try {
+      await expect(syncPreset("https://example.com/pulses/", pulseDir)).rejects.toThrow(
+        /contains no \.pulse files/,
+      );
+    } finally {
+      fetchMock.mockRestore();
+    }
+
+    const nonHtmlDir = await makePulseDir();
+    const nonHtmlResponse = {
+      ok: true,
+      status: 200,
+      url: "",
+      body: null,
+      headers: new Headers({ "content-type": "text/plain" }),
+    } as unknown as Response;
+    const nonHtmlFetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response('<a href="notes">notes</a>'))
+      .mockResolvedValueOnce(nonHtmlResponse);
+    try {
+      await expect(syncPreset("https://example.com/pulses/", nonHtmlDir)).rejects.toThrow(
+        /contains no \.pulse files/,
+      );
+    } finally {
+      nonHtmlFetch.mockRestore();
+    }
+
+    const successDir = await makePulseDir();
+    const successFetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response('<a href="wave.pulse">wave</a>', {
+          headers: { "content-type": "text/html" },
+        }),
+      )
+      .mockResolvedValueOnce(new Response(PULSE_A));
+    try {
+      await expect(syncPreset("https://example.com/pulses/", successDir)).resolves.toMatchObject({
+        files: 1,
+      });
+    } finally {
+      successFetch.mockRestore();
     }
   });
 
