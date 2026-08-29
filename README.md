@@ -51,6 +51,21 @@ Use this MCP server command in the client's configuration:
 }
 ```
 
+To install `.pulse` files from any supported source, add `--preset` (or `-p`)
+and its source. For example, this imports a GitHub tree recursively:
+
+```json
+{
+  "command": "npx",
+  "args": [
+    "-y",
+    "@zakotoys/dglab-mcp@latest",
+    "--preset",
+    "https://github.com/zakotoys/dglab-pulse-collect/tree/main/pulses/pulse-001"
+  ]
+}
+```
+
 For Windows clients that require it, use `cmd`:
 
 ```json
@@ -168,17 +183,32 @@ limit advertised by the app or device.
 
 ## External waveforms
 
-Put official-format `.pulse` files directly in `DGLAB_PULSE_DIR`:
+Put official-format `.pulse` files anywhere under `DGLAB_PULSE_DIR`:
 
 ```text
 ~/.dglab-mcp/pulses/
   waves.pulse
-  my-favourite.pulse
+  favourites/
+    my-favourite.pulse
 ```
 
-The directory is rescanned on every list/play call. Files are limited to 64 KiB,
-and the catalog accepts at most 100 files. Names match built-in ids and labels
-case- and separator-insensitively, but matching is exact rather than fuzzy.
+The directory is rescanned recursively on every list/play call. Files are limited
+to 64 KiB, and the catalog accepts at most 100 files. Names match built-in ids and
+labels case- and separator-insensitively, but matching is exact rather than fuzzy.
+
+At startup, `--preset <source>` or `-p <source>` uses the same source grammar as
+`npx skills`: local paths, GitHub/GitLab repository or tree sources, GitHub
+shorthand (`owner/repo`), direct `.pulse` downloads, and well-known HTTP(S)
+directory listings. GitHub and GitLab repository trees are traversed through
+their repository APIs; generic HTTP directories are crawled recursively on the
+same origin. Relative subdirectories are preserved. Direct git clone sources
+are supported for repositories containing `.pulse` files. Hosted archive URLs
+are recognized as download sources but are not extracted; use a direct `.pulse`
+URL instead. The server writes `manifest.json` in `DGLAB_PULSE_DIR` with each
+source, local path, and SHA-256 hash. On later starts, a source whose local
+files still match the manifest is used without another network request; missing
+or modified managed files are downloaded again. Download and cache diagnostics
+go to stderr so stdout remains exclusively available to MCP JSON-RPC.
 
 ## Development
 

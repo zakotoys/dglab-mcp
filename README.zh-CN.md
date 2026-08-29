@@ -47,6 +47,21 @@ Claude Desktop、Cursor、OpenCode、Codex 或其他 MCP 客户端通过本地 s
 }
 ```
 
+要从支持的来源安装 `.pulse` 文件，请添加 `--preset`（或 `-p`）及其来源。
+例如，递归导入 GitHub tree：
+
+```json
+{
+  "command": "npx",
+  "args": [
+    "-y",
+    "@zakotoys/dglab-mcp@latest",
+    "--preset",
+    "https://github.com/zakotoys/dglab-pulse-collect/tree/main/pulses/pulse-001"
+  ]
+}
+```
+
 Windows 客户端需要时使用 `cmd`：
 
 ```json
@@ -160,16 +175,26 @@ npx @modelcontextprotocol/inspector -y @zakotoys/dglab-mcp@latest
 
 ## 外部波形
 
-将官方格式的 `.pulse` 文件直接放入 `DGLAB_PULSE_DIR`：
+将官方格式的 `.pulse` 文件放入 `DGLAB_PULSE_DIR` 的任意层级：
 
 ```text
 ~/.dglab-mcp/pulses/
   waves.pulse
-  my-favourite.pulse
+  favourites/
+    my-favourite.pulse
 ```
 
-每次列出或播放波形时都会重新扫描目录。单文件上限为 64 KiB，目录最多加载
+每次列出或播放波形时都会递归重新扫描目录。单文件上限为 64 KiB，目录最多加载
 100 个文件。名称支持对大小写和分隔符不敏感的精确匹配，不进行模糊匹配。
+
+启动时，`--preset <source>` 或 `-p <source>` 使用与 `npx skills` 相同的来源格式：本地路径、
+GitHub/GitLab 仓库或 tree 来源、GitHub 简写（`owner/repo`）、直接 `.pulse` 下载和 HTTP(S)
+目录列表。GitHub 和 GitLab 仓库树通过对应 API 遍历；普通 HTTP 目录会在同源范围内递归爬取。
+也支持包含 `.pulse` 文件的直接 git clone 来源。归档 URL 会被识别为 download 来源，但不会解压；请改用直接 `.pulse` URL。
+服务会在 `DGLAB_PULSE_DIR` 中生成 `manifest.json`，
+记录来源 URL、本地路径和 SHA-256 哈希。后续启动时，如果本地文件仍与清单一致，就不会
+再次发起网络请求；缺失或被修改的托管文件会重新下载。下载和缓存诊断只写入 stderr，
+stdout 始终仅用于 MCP JSON-RPC。
 
 ## 开发
 

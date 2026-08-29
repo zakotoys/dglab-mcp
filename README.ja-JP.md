@@ -47,6 +47,21 @@ Claude Desktop、Cursor、OpenCode、Codex、その他の MCP クライアント
 }
 ```
 
+対応するソースから `.pulse` ファイルをインストールするには、`--preset`（または `-p`）と
+ソースを指定します。たとえば、GitHub tree を再帰的にインポートできます：
+
+```json
+{
+  "command": "npx",
+  "args": [
+    "-y",
+    "@zakotoys/dglab-mcp@latest",
+    "--preset",
+    "https://github.com/zakotoys/dglab-pulse-collect/tree/main/pulses/pulse-001"
+  ]
+}
+```
+
 Windows クライアントで必要な場合は `cmd` を使用します：
 
 ```json
@@ -161,16 +176,27 @@ stdio で接続し、`dglab_connect` を呼び出すとペアリング QR コー
 
 ## 外部波形
 
-公式形式の `.pulse` ファイルを `DGLAB_PULSE_DIR` 直下に置きます：
+公式形式の `.pulse` ファイルを `DGLAB_PULSE_DIR` 以下に置きます：
 
 ```text
 ~/.dglab-mcp/pulses/
   waves.pulse
-  my-favourite.pulse
+  favourites/
+    my-favourite.pulse
 ```
 
-一覧または再生を呼び出すたびに再スキャンします。1 ファイルは 64 KiB 以下、カタログは最大 100 ファイルです。
+一覧または再生を呼び出すたびに再帰的にスキャンします。1 ファイルは 64 KiB 以下、カタログは最大 100 ファイルです。
 名前は大文字小文字と区切り文字を区別しない完全一致で、あいまい検索は行いません。
+
+起動時に `--preset <source>` または `-p <source>` を指定すると、`npx skills` と同じソース形式を
+使用できます。ローカルパス、GitHub/GitLab リポジトリまたは tree、GitHub の短縮形（`owner/repo`）、
+直接の `.pulse` ダウンロード、HTTP(S) ディレクトリ一覧に対応します。GitHub と GitLab のリポジトリツリーは
+各 API で走査され、通常の HTTP ディレクトリは同一オリジン内で再帰的にクロールされます。`.pulse` を含む
+直接 git clone ソースにも対応します。アーカイブ URL は download ソースとして認識されますが展開されないため、直接の
+`.pulse` URL を指定してください。`DGLAB_PULSE_DIR` 内の `manifest.json` には、ソース、ローカルパス、
+SHA-256 ハッシュが記録されます。次回以降はローカルファイルが manifest と一致すれば
+ネットワークリクエストを行わず、欠落または変更された管理対象ファイルだけを再ダウンロード
+します。診断は stderr にのみ出力されるため、stdout は MCP JSON-RPC 専用のままです。
 
 ## 開発
 

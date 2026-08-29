@@ -2,8 +2,10 @@
 import { createRequire } from "node:module";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { type CliOptions, parseCliArgs } from "./cli.js";
 import { type Config, loadConfig } from "./config.js";
 import { log } from "./log.js";
+import { syncPreset } from "./presets.js";
 import { DglabService } from "./service.js";
 import { registerTools } from "./tools.js";
 
@@ -20,8 +22,23 @@ function loadConfigOrExit(): Config {
   }
 }
 
+function loadCliOptionsOrExit(): CliOptions {
+  try {
+    return parseCliArgs(process.argv.slice(2));
+  } catch (error) {
+    process.stderr.write(`dglab-mcp: invalid arguments: ${(error as Error).message}\n`);
+    process.exit(1);
+  }
+}
+
 async function main(): Promise<void> {
+  const options = loadCliOptionsOrExit();
   const config = loadConfigOrExit();
+
+  if (options.presetSource !== undefined) {
+    const result = await syncPreset(options.presetSource, config.pulseDir);
+    log("preset synchronization complete", { ...result });
+  }
 
   const service = new DglabService(config);
   const server = new McpServer({ name: "dglab-mcp", version: SERVER_VERSION });
