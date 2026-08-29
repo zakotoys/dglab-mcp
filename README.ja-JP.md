@@ -2,7 +2,7 @@
 
 [![npm](https://img.shields.io/npm/v/%40zakotoys%2Fdglab-mcp?logo=npm&logoColor=white)](https://www.npmjs.com/package/@zakotoys/dglab-mcp)
 [![CI](https://github.com/zakotoys/dglab-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/zakotoys/dglab-mcp/actions/workflows/ci.yml)
-[![License: GPL-3.0-only](https://img.shields.io/badge/license-GPL--3.0-only-blue)](LICENSE)
+[![License: GPL-3.0-only](https://img.shields.io/badge/license-GPL--3.0--only-blue)](LICENSE)
 
 [English](README.md) | [简体中文](README.zh-CN.md) | **日本語**
 
@@ -186,8 +186,9 @@ npm run lint:fix
 
 ## リリース
 
-GitHub Actions は一致する `vX.Y.Z` tag を npm Trusted Publishing と provenance 付きで公開します。
-npm パッケージの Trusted Publisher は次のように設定します：
+GitHub Actions は一致する `vX.Y.Z` tag を npm Trusted Publishing と provenance 付きで公開し、
+自動生成された changelog を含む GitHub Release も作成します。workflow を再実行した場合、
+既存の Release は変更しません。npm パッケージの Trusted Publisher は次のように設定します：
 
 - Provider：GitHub Actions
 - Organization/user：`zakotoys`

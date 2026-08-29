@@ -2,7 +2,7 @@
 
 [![npm](https://img.shields.io/npm/v/%40zakotoys%2Fdglab-mcp?logo=npm&logoColor=white)](https://www.npmjs.com/package/@zakotoys/dglab-mcp)
 [![CI](https://github.com/zakotoys/dglab-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/zakotoys/dglab-mcp/actions/workflows/ci.yml)
-[![License: GPL-3.0-only](https://img.shields.io/badge/license-GPL--3.0-only-blue)](LICENSE)
+[![License: GPL-3.0-only](https://img.shields.io/badge/license-GPL--3.0--only-blue)](LICENSE)
 
 **English** | [简体中文](README.zh-CN.md) | [日本語](README.ja-JP.md)
 
@@ -195,7 +195,9 @@ hardware.
 ## Releases
 
 GitHub Actions publishes matching `vX.Y.Z` tags with npm Trusted Publishing and
-provenance. Configure the npm package's Trusted Publisher as:
+provenance, then creates a GitHub Release with automatically generated changelog
+notes. If the workflow is rerun, an existing Release is kept unchanged.
+Configure the npm package's Trusted Publisher as:
 
 - Provider: GitHub Actions
 - Organization/user: `zakotoys`

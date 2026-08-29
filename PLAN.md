@@ -70,7 +70,7 @@ All tools return an object-shaped `structuredContent` result plus equivalent con
 - Run MCP integration tests through linked in-memory transports and a compiled stdio subprocess. Verify tool schemas, structured/text results, error envelopes, QR PNG bytes, and clean stdout.
 - Add TypeScript checks, Biome checks, Vitest coverage, build, and `npm pack --dry-run` to CI on Node.js 22.
 - Package as scoped `@zakotoys/dglab-mcp` version `0.1.0` with a `dglab-mcp` executable, lockfile, shebang-preserving ESM build, `prepublishOnly` verification, and `GPL-3.0-only` licensing.
-- Publish from GitHub Actions on matching `vX.Y.Z` tags with npm Trusted Publishing (OIDC) and provenance after the full CI suite passes.
+- Publish from GitHub Actions on matching `vX.Y.Z` tags with npm Trusted Publishing (OIDC) and provenance after the full CI suite passes, then create a GitHub Release with generated changelog notes.
 - Expand the README with safety warnings, environment reference, pairing workflow, waveform directory format, Inspector usage, and platform-specific `npx -y @zakotoys/dglab-mcp@latest` configurations for Claude Desktop and Cursor.
 - Complete a manual hardware checklist with both Coyote generations: QR pairing, battery/status updates, A/B control, presets, custom curves, hot-loaded files, enforced limits, watchdog cutoff, emergency stop, and graceful client shutdown.
 

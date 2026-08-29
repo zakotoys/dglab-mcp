@@ -2,7 +2,7 @@
 
 [![npm](https://img.shields.io/npm/v/%40zakotoys%2Fdglab-mcp?logo=npm&logoColor=white)](https://www.npmjs.com/package/@zakotoys/dglab-mcp)
 [![CI](https://github.com/zakotoys/dglab-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/zakotoys/dglab-mcp/actions/workflows/ci.yml)
-[![License: GPL-3.0-only](https://img.shields.io/badge/license-GPL--3.0-only-blue)](LICENSE)
+[![License: GPL-3.0-only](https://img.shields.io/badge/license-GPL--3.0--only-blue)](LICENSE)
 
 [English](README.md) | **简体中文** | [日本語](README.ja-JP.md)
 
@@ -186,7 +186,8 @@ npm run lint:fix
 ## 发布版本
 
 GitHub Actions 会在匹配的 `vX.Y.Z` tag 上，通过 npm Trusted Publishing 和
-provenance 发布。npm 包的 Trusted Publisher 配置如下：
+provenance 发布，然后创建 GitHub Release 并自动生成 changelog。重复运行
+workflow 时，已有的 Release 会保持不变。npm 包的 Trusted Publisher 配置如下：
 
 - Provider：GitHub Actions
 - Organization/user：`zakotoys`
