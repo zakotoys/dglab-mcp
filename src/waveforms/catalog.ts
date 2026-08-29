@@ -54,7 +54,7 @@ export function buildBuiltinCatalog(): WaveformEntry[] {
 }
 
 /**
- * Rescan the external `.pulse` directory. Only direct regular `.pulse`
+ * Rescan the external `.pulse` directory recursively. Only regular `.pulse`
  * files are accepted; invalid or oversized files are reported without
  * disabling the rest of the catalog.
  */
@@ -65,24 +65,20 @@ export async function scanPulseDirectory(dir: string): Promise<{
   const entries: WaveformEntry[] = [];
   const errors: FileError[] = [];
 
-  const dirents = await fs.readdir(dir, { withFileTypes: true }).catch(() => null);
-  if (dirents === null) {
+  const pulseFiles = await findPulseFiles(dir);
+  if (pulseFiles === null) {
     return { entries, errors };
   }
 
-  const pulseFiles = dirents
-    .filter((dirent) => dirent.isFile() && dirent.name.toLowerCase().endsWith(".pulse"))
-    .sort((a, b) => a.name.localeCompare(b.name));
-
-  for (const dirent of pulseFiles) {
+  for (const relativePath of pulseFiles) {
     if (entries.length >= EXTERNAL_CATALOG_LIMIT) {
       errors.push({
-        file: dirent.name,
+        file: relativePath,
         error: `external waveform catalog is full (${EXTERNAL_CATALOG_LIMIT} files); file skipped`,
       });
       continue;
     }
-    const filePath = path.join(dir, dirent.name);
+    const filePath = path.join(dir, ...relativePath.split("/"));
     try {
       const stat = await fs.stat(filePath);
       if (stat.size > PULSE_FILE_LIMIT_BYTES) {
@@ -92,7 +88,7 @@ export async function scanPulseDirectory(dir: string): Promise<{
       }
       const text = await fs.readFile(filePath, "utf8");
       const parsed = parsePulseText(text);
-      const stem = dirent.name.replace(/\.pulse$/i, "");
+      const stem = relativePath.replace(/\.pulse$/i, "");
       const name = parsed.name || stem;
       entries.push({
         id: stem,
@@ -104,11 +100,37 @@ export async function scanPulseDirectory(dir: string): Promise<{
         naturalDurationMs: parsed.frames.length * 25,
       });
     } catch (error) {
-      errors.push({ file: dirent.name, error: (error as Error).message });
+      errors.push({ file: relativePath, error: (error as Error).message });
     }
   }
 
   return { entries, errors };
+}
+
+async function findPulseFiles(root: string): Promise<string[] | null> {
+  const files: string[] = [];
+
+  const visit = async (relativeDir: string): Promise<boolean> => {
+    const directory = path.join(root, ...relativeDir.split("/").filter(Boolean));
+    const dirents = await fs.readdir(directory, { withFileTypes: true }).catch(() => null);
+    if (dirents === null) {
+      return false;
+    }
+    for (const dirent of dirents) {
+      const relativePath = relativeDir === "" ? dirent.name : `${relativeDir}/${dirent.name}`;
+      if (dirent.isDirectory()) {
+        await visit(relativePath);
+      } else if (dirent.isFile() && dirent.name.toLowerCase().endsWith(".pulse")) {
+        files.push(relativePath);
+      }
+    }
+    return true;
+  };
+
+  if (!(await visit(""))) {
+    return null;
+  }
+  return files.sort((a, b) => a.localeCompare(b));
 }
 
 /**

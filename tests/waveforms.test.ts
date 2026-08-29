@@ -223,11 +223,12 @@ describe("scanPulseDirectory", () => {
     );
 
     const { entries, errors } = await scanPulseDirectory(dir);
-    expect(entries).toHaveLength(1);
-    expect(entries[0]!.id).toBe("waves");
-    expect(entries[0]!.name).toBe("MyWave");
-    expect(entries[0]!.source).toBe("file");
-    expect(entries[0]!.octets.length).toBeGreaterThan(0);
+    expect(entries).toHaveLength(2);
+    expect(entries.map((entry) => entry.id)).toEqual(["nested/deep", "waves"]);
+    expect(entries[1]!.id).toBe("waves");
+    expect(entries[1]!.name).toBe("MyWave");
+    expect(entries[1]!.source).toBe("file");
+    expect(entries[1]!.octets.length).toBeGreaterThan(0);
     expect(errors).toHaveLength(1);
     expect(errors[0]!.file).toBe("broken.pulse");
   });

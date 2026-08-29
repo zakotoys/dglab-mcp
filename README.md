@@ -51,6 +51,21 @@ Use this MCP server command in the client's configuration:
 }
 ```
 
+To install a remote `.pulse` file or recursively install an HTML directory
+listing, add `--preset` (or `-p`) and its URL:
+
+```json
+{
+  "command": "npx",
+  "args": [
+    "-y",
+    "@zakotoys/dglab-mcp@latest",
+    "--preset",
+    "https://example.com/pulses/"
+  ]
+}
+```
+
 For Windows clients that require it, use `cmd`:
 
 ```json
@@ -168,17 +183,29 @@ limit advertised by the app or device.
 
 ## External waveforms
 
-Put official-format `.pulse` files directly in `DGLAB_PULSE_DIR`:
+Put official-format `.pulse` files anywhere under `DGLAB_PULSE_DIR`:
 
 ```text
 ~/.dglab-mcp/pulses/
   waves.pulse
-  my-favourite.pulse
+  favourites/
+    my-favourite.pulse
 ```
 
-The directory is rescanned on every list/play call. Files are limited to 64 KiB,
-and the catalog accepts at most 100 files. Names match built-in ids and labels
-case- and separator-insensitively, but matching is exact rather than fuzzy.
+The directory is rescanned recursively on every list/play call. Files are limited
+to 64 KiB, and the catalog accepts at most 100 files. Names match built-in ids and
+labels case- and separator-insensitively, but matching is exact rather than fuzzy.
+
+At startup, `--preset <url>` or `-p <url>` downloads either one `.pulse` URL or
+all `.pulse` links in a same-origin HTML directory tree. GitHub `tree/<ref>/...`
+URLs are resolved recursively through the Git Trees API, and GitHub
+`blob/<ref>/.../*.pulse` URLs are accepted as single files. Relative
+subdirectories are preserved. The server writes `manifest.json` in
+`DGLAB_PULSE_DIR` with each source URL, local path, and SHA-256 hash. On later
+starts, a source whose local files still match the manifest is used without
+another network request; missing or modified managed files are downloaded
+again. Download and cache diagnostics go to stderr so stdout remains
+exclusively available to MCP JSON-RPC.
 
 ## Development
 

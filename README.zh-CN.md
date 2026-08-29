@@ -47,6 +47,21 @@ Claude Desktop、Cursor、OpenCode、Codex 或其他 MCP 客户端通过本地 s
 }
 ```
 
+要安装远程 `.pulse` 文件，或递归安装 HTML 目录列表，请添加 `--preset`
+（或 `-p`）及其 URL：
+
+```json
+{
+  "command": "npx",
+  "args": [
+    "-y",
+    "@zakotoys/dglab-mcp@latest",
+    "--preset",
+    "https://example.com/pulses/"
+  ]
+}
+```
+
 Windows 客户端需要时使用 `cmd`：
 
 ```json
@@ -160,16 +175,25 @@ npx @modelcontextprotocol/inspector -y @zakotoys/dglab-mcp@latest
 
 ## 外部波形
 
-将官方格式的 `.pulse` 文件直接放入 `DGLAB_PULSE_DIR`：
+将官方格式的 `.pulse` 文件放入 `DGLAB_PULSE_DIR` 的任意层级：
 
 ```text
 ~/.dglab-mcp/pulses/
   waves.pulse
-  my-favourite.pulse
+  favourites/
+    my-favourite.pulse
 ```
 
-每次列出或播放波形时都会重新扫描目录。单文件上限为 64 KiB，目录最多加载
+每次列出或播放波形时都会递归重新扫描目录。单文件上限为 64 KiB，目录最多加载
 100 个文件。名称支持对大小写和分隔符不敏感的精确匹配，不进行模糊匹配。
+
+启动时，`--preset <url>` 或 `-p <url>` 会下载单个 `.pulse` URL，或同源 HTML
+目录树中链接的全部 `.pulse` 文件，并保留相对目录结构。GitHub 的
+`tree/<ref>/...` URL 会通过 Git Trees API 递归解析，`blob/<ref>/.../*.pulse`
+URL 也可作为单文件来源。服务会在 `DGLAB_PULSE_DIR` 中生成 `manifest.json`，
+记录来源 URL、本地路径和 SHA-256 哈希。后续启动时，如果本地文件仍与清单一致，就不会
+再次发起网络请求；缺失或被修改的托管文件会重新下载。下载和缓存诊断只写入 stderr，
+stdout 始终仅用于 MCP JSON-RPC。
 
 ## 开发
 

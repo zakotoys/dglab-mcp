@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
+import { createServer } from "node:http";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
@@ -277,8 +278,19 @@ describe("dglab-mcp stdio subprocess", () => {
     const relay = new FakeV4Relay();
     const url = await relay.start();
     const pulseDir = await fs.mkdtemp(path.join(os.tmpdir(), "dglab-stdio-pulses-"));
+    let presetRequests = 0;
+    const presetServer = createServer((_request, response) => {
+      presetRequests += 1;
+      response.end("Dungeonlab+pulse:Stdio=0,0,0,1,1/10-0,50-100");
+    });
+    await new Promise<void>((resolve) => presetServer.listen(0, "127.0.0.1", resolve));
+    const presetAddress = presetServer.address();
+    if (typeof presetAddress !== "object" || presetAddress === null) {
+      throw new Error("preset test server has no TCP address");
+    }
+    const presetUrl = `http://127.0.0.1:${presetAddress.port}/stdio.pulse`;
     try {
-      const child = spawn(process.execPath, [SERVER_ENTRY], {
+      const child = spawn(process.execPath, [SERVER_ENTRY, "-p", presetUrl], {
         env: { ...process.env, DGLAB_RELAY_URL: url, DGLAB_PULSE_DIR: pulseDir },
         stdio: ["pipe", "pipe", "pipe"],
       });
@@ -325,8 +337,16 @@ describe("dglab-mcp stdio subprocess", () => {
         (toolsResponse as { result?: { tools?: unknown[] } })?.result?.tools?.length ?? 0,
       );
       expect(toolCount).toBe(11);
+      expect(presetRequests).toBe(1);
+      expect(await fs.readFile(path.join(pulseDir, "stdio.pulse"), "utf8")).toContain(
+        "Dungeonlab+pulse:Stdio",
+      );
+      expect(await fs.readFile(path.join(pulseDir, "manifest.json"), "utf8")).toContain(presetUrl);
       expect(stderr.join("")).toContain("dglab-mcp");
     } finally {
+      await new Promise<void>((resolve, reject) =>
+        presetServer.close((error) => (error ? reject(error) : resolve())),
+      );
       await relay.stop();
       await fs.rm(pulseDir, { recursive: true, force: true });
     }
