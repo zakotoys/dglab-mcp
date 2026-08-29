@@ -203,9 +203,7 @@ describe("syncPreset", () => {
   it("resolves GitHub tree URLs through the recursive tree API", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
-      if (
-        url.startsWith("https://api.github.com/repos/zakotoys/dglab-pulse-collect/git/trees/main")
-      ) {
+      if (new URL(url).pathname === "/repos/zakotoys/dglab-pulse-collect/git/trees/main") {
         return new Response(
           JSON.stringify({
             truncated: false,
@@ -219,6 +217,9 @@ describe("syncPreset", () => {
           }),
           { status: 200, headers: { "content-type": "application/json" } },
         );
+      }
+      if (url.startsWith("https://api.github.com/repos/")) {
+        return new Response("", { status: 404 });
       }
       if (
         url ===
@@ -245,7 +246,35 @@ describe("syncPreset", () => {
 
       const cached = await syncPreset(source, pulseDir);
       expect(cached).toMatchObject({ downloaded: 0, reused: 2, files: 2 });
-      expect(fetchMock).toHaveBeenCalledTimes(3);
+      expect(fetchMock).toHaveBeenCalledTimes(5);
+    } finally {
+      fetchMock.mockRestore();
+    }
+  });
+
+  it("resolves the longest GitHub branch name in a tree URL", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes("/git/trees/feature%2Fx")) {
+        return new Response(
+          JSON.stringify({
+            truncated: false,
+            tree: [{ path: "root.pulse", type: "blob" }],
+          }),
+        );
+      }
+      if (url === "https://raw.githubusercontent.com/owner/repo/feature%2Fx/root.pulse") {
+        return new Response(PULSE_A);
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    const pulseDir = await makePulseDir();
+
+    try {
+      expect(
+        await syncPreset("https://github.com/owner/repo/tree/feature/x", pulseDir),
+      ).toMatchObject({ files: 1 });
+      expect(await fs.readFile(path.join(pulseDir, "root.pulse"), "utf8")).toBe(PULSE_A);
     } finally {
       fetchMock.mockRestore();
     }
@@ -290,13 +319,16 @@ describe("syncPreset", () => {
   it("normalizes encoded GitHub subpaths and raw repository filenames", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
-      if (url.includes("/git/trees/main")) {
+      if (new URL(url).pathname === "/repos/owner/repo/git/trees/main") {
         return new Response(
           JSON.stringify({
             truncated: false,
             tree: [{ path: "pulses/my folder/50%.pulse", type: "blob" }],
           }),
         );
+      }
+      if (url.includes("api.github.com")) {
+        return new Response("", { status: 404 });
       }
       if (
         url === "https://raw.githubusercontent.com/owner/repo/main/pulses/my%20folder/50%25.pulse"
@@ -323,6 +355,9 @@ describe("syncPreset", () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
       if (url.includes("gitlab.com/api/v4/projects/group%2Frepo/repository/tree")) {
+        if (new URL(url).searchParams.get("ref") !== "main") {
+          return new Response("", { status: 404 });
+        }
         return new Response(
           JSON.stringify([
             { type: "blob", path: "pulses/my folder/50%.pulse" },
@@ -347,6 +382,30 @@ describe("syncPreset", () => {
       );
       expect(result).toMatchObject({ downloaded: 1, reused: 0, files: 1 });
       expect(await fs.readFile(path.join(pulseDir, "50%.pulse"), "utf8")).toBe(PULSE_A);
+    } finally {
+      fetchMock.mockRestore();
+    }
+  });
+
+  it("resolves the longest GitLab branch name in a tree URL", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes("/repository/tree")) {
+        expect(new URL(url).searchParams.get("ref")).toBe("feature/x");
+        return new Response(JSON.stringify([{ type: "blob", path: "root.pulse" }]));
+      }
+      if (url === "https://gitlab.com/group/repo/-/raw/feature%2Fx/root.pulse") {
+        return new Response(PULSE_A);
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    const pulseDir = await makePulseDir();
+
+    try {
+      expect(
+        await syncPreset("https://gitlab.com/group/repo/-/tree/feature/x", pulseDir),
+      ).toMatchObject({ files: 1 });
+      expect(await fs.readFile(path.join(pulseDir, "root.pulse"), "utf8")).toBe(PULSE_A);
     } finally {
       fetchMock.mockRestore();
     }
@@ -799,6 +858,21 @@ describe("syncPreset", () => {
       await expect(
         syncPreset("https://gitlab.com/group/repo/-/tree/main", pulseDir),
       ).rejects.toThrow(expected);
+    } finally {
+      fetchMock.mockRestore();
+    }
+  });
+
+  it("rejects a GitLab tree URL when no candidate ref exists", async () => {
+    const pulseDir = await makePulseDir();
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response("", { status: 404 }));
+    try {
+      await expect(
+        syncPreset("https://gitlab.com/group/repo/-/tree/missing/branch", pulseDir),
+      ).rejects.toThrow(/failed to resolve GitLab preset tree/);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
     } finally {
       fetchMock.mockRestore();
     }

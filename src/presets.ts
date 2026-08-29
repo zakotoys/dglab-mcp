@@ -185,6 +185,9 @@ function sourceKeyFor(source: ParsedSource): string {
   if (source.ref !== undefined) {
     normalized.hash = source.ref;
   }
+  if (source.treePath !== undefined) {
+    normalized.searchParams.set("tree", source.treePath);
+  }
   if (source.subpath !== undefined) {
     normalized.searchParams.set("path", source.subpath);
   }
@@ -403,6 +406,19 @@ async function discoverGitFiles(source: ParsedSource): Promise<RemoteFile[]> {
   }
 }
 
+interface RepositoryTreeLocation {
+  ref: string;
+  subpath?: string;
+}
+
+function repositoryTreeLocations(treePath: string): RepositoryTreeLocation[] {
+  const segments = treePath.split("/").filter(Boolean);
+  return segments.map((_, index) => ({
+    ref: segments.slice(0, segments.length - index).join("/"),
+    ...(index === 0 ? {} : { subpath: segments.slice(segments.length - index).join("/") }),
+  }));
+}
+
 function gitSourceFileUrl(source: ParsedSource, relativePath: string): URL {
   const url = new URL("git+preset://source/file");
   url.searchParams.set("source", source.url);
@@ -429,12 +445,18 @@ async function discoverDirectoryFiles(
 
 async function discoverGitHubFiles(source: ParsedSource): Promise<RemoteFile[]> {
   const repository = parseRepositoryUrl(source.url);
-  const refs = source.ref === undefined ? ["HEAD", "main", "master"] : [source.ref];
+  const locations =
+    source.treePath === undefined
+      ? (source.ref === undefined ? ["HEAD", "main", "master"] : [source.ref]).map((ref) => ({
+          ref,
+          subpath: source.subpath,
+        }))
+      : repositoryTreeLocations(source.treePath);
   let treeResponse: Response | undefined;
-  let resolvedRef: string | undefined;
-  for (const ref of refs) {
+  let resolvedLocation: RepositoryTreeLocation | undefined;
+  for (const location of locations) {
     const apiUrl = new URL(
-      `https://api.github.com/repos/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.repo)}/git/trees/${encodeURIComponent(ref)}`,
+      `https://api.github.com/repos/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.repo)}/git/trees/${encodeURIComponent(location.ref)}`,
     );
     apiUrl.searchParams.set("recursive", "1");
     const response = await fetch(apiUrl, {
@@ -444,14 +466,14 @@ async function discoverGitHubFiles(source: ParsedSource): Promise<RemoteFile[]> 
       },
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
-    if (response.status === 404 && source.ref === undefined) {
+    if (response.status === 404 && (source.ref === undefined || source.treePath !== undefined)) {
       continue;
     }
     treeResponse = response;
-    resolvedRef = ref;
+    resolvedLocation = location;
     break;
   }
-  if (treeResponse === undefined || resolvedRef === undefined) {
+  if (treeResponse === undefined || resolvedLocation === undefined) {
     throw new Error(`failed to resolve GitHub preset repository ${source.url}`);
   }
   if (!treeResponse.ok) {
@@ -475,7 +497,10 @@ async function discoverGitHubFiles(source: ParsedSource): Promise<RemoteFile[]> 
     throw new Error(`GitHub tree for ${source.url} is too large to traverse safely`);
   }
 
-  const prefix = source.subpath === undefined ? "" : `${source.subpath.replace(/\/+$/g, "")}/`;
+  const prefix =
+    resolvedLocation.subpath === undefined
+      ? ""
+      : `${resolvedLocation.subpath.replace(/\/+$/g, "")}/`;
   const files = new Map<string, RemoteFile>();
   for (const entry of parsed.data.tree) {
     if (entry.type !== "blob" || !entry.path.toLowerCase().endsWith(".pulse")) {
@@ -488,7 +513,12 @@ async function discoverGitHubFiles(source: ParsedSource): Promise<RemoteFile[]> 
       throw new Error("preset directory contains more than 100 .pulse files");
     }
     const relativePath = safeRepositoryPath(entry.path.slice(prefix.length));
-    const url = githubRawFileUrl(repository.owner, repository.repo, resolvedRef, entry.path);
+    const url = githubRawFileUrl(
+      repository.owner,
+      repository.repo,
+      resolvedLocation.ref,
+      entry.path,
+    );
     files.set(url.href, { url, relativePath });
   }
   return [...files.values()].sort((left, right) => left.url.href.localeCompare(right.url.href));
@@ -517,19 +547,36 @@ async function discoverGitLabFiles(source: ParsedSource): Promise<RemoteFile[]> 
   const repository = parseGitLabRepositoryUrl(source.url);
   const apiBase = `${repository.protocol}//${repository.host}/api/v4`;
   const projectId = encodeURIComponent(repository.repoPath);
-  const ref = source.ref ?? (await fetchGitLabDefaultBranch(apiBase, projectId, source.url));
+  const locations =
+    source.treePath === undefined
+      ? [
+          {
+            ref: source.ref ?? (await fetchGitLabDefaultBranch(apiBase, projectId, source.url)),
+            subpath: source.subpath,
+          },
+        ]
+      : repositoryTreeLocations(source.treePath);
+  let resolvedLocation: RepositoryTreeLocation | undefined;
+  let firstResponse: Response | undefined;
+  for (const location of locations) {
+    const response = await fetchGitLabTreePage(apiBase, projectId, location.ref, 1);
+    if (response.status === 404 && source.treePath !== undefined) {
+      continue;
+    }
+    resolvedLocation = location;
+    firstResponse = response;
+    break;
+  }
+  if (resolvedLocation === undefined || firstResponse === undefined) {
+    throw new Error(`failed to resolve GitLab preset tree ${source.url}`);
+  }
   const entries: Array<{ type: string; path: string }> = [];
 
   for (let page = 1; page <= GITLAB_PAGE_LIMIT; page += 1) {
-    const apiUrl = new URL(`${apiBase}/projects/${projectId}/repository/tree`);
-    apiUrl.searchParams.set("recursive", "true");
-    apiUrl.searchParams.set("per_page", "100");
-    apiUrl.searchParams.set("page", String(page));
-    apiUrl.searchParams.set("ref", ref);
-    const response = await fetch(apiUrl, {
-      headers: { accept: "application/json", "user-agent": "dglab-mcp" },
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-    });
+    const response =
+      page === 1
+        ? firstResponse
+        : await fetchGitLabTreePage(apiBase, projectId, resolvedLocation.ref, page);
     if (!response.ok) {
       throw new Error(`failed to fetch GitLab preset tree ${source.url}: HTTP ${response.status}`);
     }
@@ -553,7 +600,10 @@ async function discoverGitLabFiles(source: ParsedSource): Promise<RemoteFile[]> 
     }
   }
 
-  const prefix = source.subpath === undefined ? "" : `${source.subpath.replace(/\/+$/g, "")}/`;
+  const prefix =
+    resolvedLocation.subpath === undefined
+      ? ""
+      : `${resolvedLocation.subpath.replace(/\/+$/g, "")}/`;
   const files = new Map<string, RemoteFile>();
   for (const entry of entries) {
     if (entry.type !== "blob" || !entry.path.toLowerCase().endsWith(".pulse")) {
@@ -566,10 +616,27 @@ async function discoverGitLabFiles(source: ParsedSource): Promise<RemoteFile[]> 
       throw new Error("preset directory contains more than 100 .pulse files");
     }
     const relativePath = safeRepositoryPath(entry.path.slice(prefix.length));
-    const url = gitLabRawFileUrl(repository, ref, entry.path);
+    const url = gitLabRawFileUrl(repository, resolvedLocation.ref, entry.path);
     files.set(url.href, { url, relativePath });
   }
   return [...files.values()].sort((left, right) => left.url.href.localeCompare(right.url.href));
+}
+
+function fetchGitLabTreePage(
+  apiBase: string,
+  projectId: string,
+  ref: string,
+  page: number,
+): Promise<Response> {
+  const apiUrl = new URL(`${apiBase}/projects/${projectId}/repository/tree`);
+  apiUrl.searchParams.set("recursive", "true");
+  apiUrl.searchParams.set("per_page", "100");
+  apiUrl.searchParams.set("page", String(page));
+  apiUrl.searchParams.set("ref", ref);
+  return fetch(apiUrl, {
+    headers: { accept: "application/json", "user-agent": "dglab-mcp" },
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+  });
 }
 
 async function fetchGitLabDefaultBranch(

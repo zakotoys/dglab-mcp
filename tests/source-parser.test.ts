@@ -18,12 +18,11 @@ describe("source-parser", () => {
     });
   });
 
-  it("parses GitHub tree URLs into a repository and subpath", () => {
+  it("preserves GitHub tree paths for repository-aware ref resolution", () => {
     expect(parseSource("https://github.com/owner/repo/tree/main/path/to/pulses")).toEqual({
       type: "github",
       url: "https://github.com/owner/repo.git",
-      ref: "main",
-      subpath: "path/to/pulses",
+      treePath: "main/path/to/pulses",
     });
     expect(parseSource("https://github.com/owner/repo")).toEqual({
       type: "github",
@@ -32,19 +31,22 @@ describe("source-parser", () => {
     expect(parseSource("https://github.com/owner/repo/tree/main/")).toEqual({
       type: "github",
       url: "https://github.com/owner/repo.git",
-      ref: "main",
+      treePath: "main",
     });
     expect(parseSource("https://github.com/owner/repo/tree/main/my%20pulses")).toEqual({
       type: "github",
       url: "https://github.com/owner/repo.git",
-      ref: "main",
-      subpath: "my pulses",
+      treePath: "main/my pulses",
     });
     expect(parseSource("https://github.com/owner/repo/tree/main/pulses?plain=1")).toEqual({
       type: "github",
       url: "https://github.com/owner/repo.git",
-      ref: "main",
-      subpath: "pulses",
+      treePath: "main/pulses",
+    });
+    expect(parseSource("https://github.com/owner/repo/tree/feature/x")).toEqual({
+      type: "github",
+      url: "https://github.com/owner/repo.git",
+      treePath: "feature/x",
     });
   });
 
@@ -59,29 +61,32 @@ describe("source-parser", () => {
     expect(parseSource("https://gitlab.com/group/subgroup/repo/-/tree/main/pulses")).toEqual({
       type: "gitlab",
       url: "https://gitlab.com/group/subgroup/repo.git",
-      ref: "main",
-      subpath: "pulses",
+      treePath: "main/pulses",
     });
     expect(parseSource("https://git.corp.test/group/repo/-/tree/dev")).toEqual({
       type: "gitlab",
       url: "https://git.corp.test/group/repo.git",
-      ref: "dev",
+      treePath: "dev",
     });
     expect(parseSource("https://gitlab.com/group/repo/-/tree/main/")).toEqual({
       type: "gitlab",
       url: "https://gitlab.com/group/repo.git",
-      ref: "main",
+      treePath: "main",
     });
     expect(parseSource("https://gitlab.com/group/repo/-/tree/main/my%20pulses")).toEqual({
       type: "gitlab",
       url: "https://gitlab.com/group/repo.git",
-      ref: "main",
-      subpath: "my pulses",
+      treePath: "main/my pulses",
     });
     expect(parseSource("https://gitlab.com/group/repo/-/tree/main?ref_type=heads")).toEqual({
       type: "gitlab",
       url: "https://gitlab.com/group/repo.git",
-      ref: "main",
+      treePath: "main",
+    });
+    expect(parseSource("https://gitlab.com/group/repo/-/tree/feature/x")).toEqual({
+      type: "gitlab",
+      url: "https://gitlab.com/group/repo.git",
+      treePath: "feature/x",
     });
   });
 
