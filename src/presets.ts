@@ -982,6 +982,7 @@ function safeUrlPath(urlPath: string): string {
     .split("/")
     .filter((segment) => segment !== "")
     .map((segment) => sanitizePathSegment(segment));
+  /* c8 ignore next: callers only pass validated .pulse paths. */
   if (segments.length === 0 || !segments.at(-1)!.toLowerCase().endsWith(".pulse")) {
     throw new Error(`unsafe preset path "${urlPath}"`);
   }
