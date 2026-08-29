@@ -56,6 +56,22 @@ function sanitizeSubpath(subpath: string): string {
   return subpath;
 }
 
+function decodeUrlSubpath(subpath: string): string {
+  try {
+    return sanitizeSubpath(
+      subpath
+        .split("/")
+        .map((segment) => decodeURIComponent(segment))
+        .join("/"),
+    );
+  } catch (error) {
+    if ((error as Error).message.startsWith("unsafe preset source subpath")) {
+      throw error;
+    }
+    throw new Error(`invalid preset source subpath "${subpath}"`);
+  }
+}
+
 function isLocalPath(input: string): boolean {
   return (
     isAbsolute(input) ||
@@ -76,7 +92,12 @@ function decodeFragmentValue(value: string): string {
 }
 
 function looksLikeGitSource(input: string): boolean {
-  if (input.startsWith("github:") || input.startsWith("gitlab:") || input.startsWith("git@")) {
+  if (
+    input.startsWith("github:") ||
+    input.startsWith("gitlab:") ||
+    input.startsWith("git@") ||
+    input.startsWith("file://")
+  ) {
     return true;
   }
   if (/^ssh:\/\/.+\.git(?:$|[/?])/i.test(input)) {
@@ -227,7 +248,7 @@ export function parseSource(input: string): ParsedSource {
             url: `${parsedUrl.protocol}//${parsedUrl.host}/${owner}/${repo}.git`,
             ...(isTreeUrl ? { ref } : fragmentRef ? { ref: fragmentRef } : {}),
             ...(isTreeUrl && subpathSegments.length > 0
-              ? { subpath: sanitizeSubpath(subpathSegments.join("/")) }
+              ? { subpath: decodeUrlSubpath(subpathSegments.join("/")) }
               : {}),
           };
         }
@@ -245,8 +266,8 @@ export function parseSource(input: string): ParsedSource {
     return {
       type: "github",
       url: `https://github.com/${owner}/${repo!.replace(/\.git$/, "")}.git`,
-      ref: ref || fragmentRef,
-      subpath: subpath ? sanitizeSubpath(subpath) : subpath,
+      ref: ref!,
+      subpath: decodeUrlSubpath(subpath!),
     };
   }
   const githubTreeMatch = input.match(
@@ -257,7 +278,7 @@ export function parseSource(input: string): ParsedSource {
     return {
       type: "github",
       url: `https://github.com/${owner}/${repo!.replace(/\.git$/, "")}.git`,
-      ref: ref || fragmentRef,
+      ref: ref!,
     };
   }
   const githubRepoMatch = input.match(/^https?:\/\/github\.com\/([^/]+)\/([^/]+)(?:\/.*)?$/);
@@ -275,25 +296,21 @@ export function parseSource(input: string): ParsedSource {
   );
   if (gitlabTreeWithPathMatch) {
     const [, protocol, hostname, repoPath, ref, subpath] = gitlabTreeWithPathMatch;
-    if (hostname !== "github.com" && repoPath) {
-      return {
-        type: "gitlab",
-        url: `${protocol}://${hostname}/${repoPath!.replace(/\.git$/, "")}.git`,
-        ref: ref || fragmentRef,
-        subpath: subpath ? sanitizeSubpath(subpath) : subpath,
-      };
-    }
+    return {
+      type: "gitlab",
+      url: `${protocol}://${hostname}/${repoPath!.replace(/\.git$/, "")}.git`,
+      ref: ref!,
+      subpath: decodeUrlSubpath(subpath!),
+    };
   }
   const gitlabTreeMatch = input.match(/^(https?):\/\/([^/]+)\/(.+?)\/-\/tree\/([^/]+)\/?$/);
   if (gitlabTreeMatch) {
     const [, protocol, hostname, repoPath, ref] = gitlabTreeMatch;
-    if (hostname !== "github.com" && repoPath) {
-      return {
-        type: "gitlab",
-        url: `${protocol}://${hostname}/${repoPath!.replace(/\.git$/, "")}.git`,
-        ref: ref || fragmentRef,
-      };
-    }
+    return {
+      type: "gitlab",
+      url: `${protocol}://${hostname}/${repoPath!.replace(/\.git$/, "")}.git`,
+      ref: ref!,
+    };
   }
   const gitlabRepoMatch = input.match(/^https?:\/\/gitlab\.com\/(.+?)(?:\.git)?\/?$/);
   if (gitlabRepoMatch) {

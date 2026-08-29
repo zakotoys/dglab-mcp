@@ -34,6 +34,12 @@ describe("source-parser", () => {
       url: "https://github.com/owner/repo.git",
       ref: "main",
     });
+    expect(parseSource("https://github.com/owner/repo/tree/main/my%20pulses")).toEqual({
+      type: "github",
+      url: "https://github.com/owner/repo.git",
+      ref: "main",
+      subpath: "my pulses",
+    });
   });
 
   it("does not treat GitHub blob paths as a separate source kind", () => {
@@ -59,6 +65,12 @@ describe("source-parser", () => {
       type: "gitlab",
       url: "https://gitlab.com/group/repo.git",
       ref: "main",
+    });
+    expect(parseSource("https://gitlab.com/group/repo/-/tree/main/my%20pulses")).toEqual({
+      type: "gitlab",
+      url: "https://gitlab.com/group/repo.git",
+      ref: "main",
+      subpath: "my pulses",
     });
   });
 
@@ -107,6 +119,26 @@ describe("source-parser", () => {
       type: "git",
       url: "https://git.example.com/owner/repo.git",
     });
+    expect(parseSource("ssh://git.example.com/owner/repo.git#develop")).toEqual({
+      type: "git",
+      url: "ssh://git.example.com/owner/repo.git",
+      ref: "develop",
+    });
+    expect(parseSource("https://git.example.com/owner/repo.git#develop")).toEqual({
+      type: "git",
+      url: "https://git.example.com/owner/repo.git",
+      ref: "develop",
+    });
+    expect(parseSource("file:///tmp/repo.git#develop")).toEqual({
+      type: "git",
+      url: "file:///tmp/repo.git",
+      ref: "develop",
+    });
+    expect(parseSource("https://gitlab.com/group/repo#develop")).toEqual({
+      type: "gitlab",
+      url: "https://gitlab.com/group/repo.git",
+      ref: "develop",
+    });
     expect(parseSource("owner/repo#%E0%A4%A")).toEqual({
       type: "github",
       url: "https://github.com/owner/repo.git",
@@ -127,6 +159,59 @@ describe("source-parser", () => {
       ref: "dev",
       subpath: "pulses",
     });
+    expect(parseSource("https://github.example.com/owner/repo#develop")).toEqual({
+      type: "git",
+      url: "https://github.example.com/owner/repo.git",
+      ref: "develop",
+    });
+    expect(parseSource("https://github.example.com/owner/repo")).toEqual({
+      type: "git",
+      url: "https://github.example.com/owner/repo.git",
+    });
+    expect(parseSource("https://github.example.com/owner")).toEqual({
+      type: "well-known",
+      url: "https://github.example.com/owner",
+    });
+    vi.stubEnv("GH_HOST", "%");
+    expect(parseSource("owner/repo")).toMatchObject({
+      type: "github",
+      url: "https://github.com/owner/repo.git",
+    });
+  });
+
+  it("supports aliases, GitLab prefixes, shorthand subpaths, and fragment filters", () => {
+    expect(parseSource("coinbase/agentWallet")).toEqual({
+      type: "github",
+      url: "https://github.com/coinbase/agentic-wallet-skills.git",
+    });
+    expect(parseSource("gitlab:group/repo#develop")).toEqual({
+      type: "gitlab",
+      url: "https://gitlab.com/group/repo.git",
+      ref: "develop",
+    });
+    expect(parseSource("owner/repo/pulses#main@wave")).toEqual({
+      type: "github",
+      url: "https://github.com/owner/repo.git",
+      ref: "main",
+      subpath: "pulses",
+      skillFilter: "wave",
+    });
+    expect(parseSource("owner/repo#@wave")).toEqual({
+      type: "github",
+      url: "https://github.com/owner/repo.git",
+      skillFilter: "wave",
+    });
+    expect(parseSource("owner/repo#main@")).toEqual({
+      type: "github",
+      url: "https://github.com/owner/repo.git",
+      ref: "main",
+    });
+    expect(parseSource("owner/repo@fallback#main@wave")).toEqual({
+      type: "github",
+      url: "https://github.com/owner/repo.git",
+      ref: "main",
+      skillFilter: "wave",
+    });
   });
 
   it("recognizes hosted artifact URLs", () => {
@@ -145,6 +230,12 @@ describe("source-parser", () => {
     expect(() => parseSource("https://github.com/owner/repo/tree/main/pulses/../private")).toThrow(
       /unsafe preset source subpath/,
     );
+    expect(() => parseSource("https://github.com/owner/repo/tree/main/%2E%2E/private")).toThrow(
+      /unsafe preset source subpath/,
+    );
+    expect(() => parseSource("https://github.com/owner/repo/tree/main/%invalid")).toThrow(
+      /invalid preset source subpath/,
+    );
   });
 
   it("does not classify lookalike hosts as GitHub or GitLab", () => {
@@ -155,6 +246,22 @@ describe("source-parser", () => {
     expect(parseSource("https://evil.example/gitlab.com/group/repo")).toEqual({
       type: "well-known",
       url: "https://evil.example/gitlab.com/group/repo",
+    });
+    expect(parseSource("https://github.com/owner")).toEqual({
+      type: "git",
+      url: "https://github.com/owner",
+    });
+    expect(parseSource("https://gitlab.com/owner")).toEqual({
+      type: "git",
+      url: "https://gitlab.com/owner",
+    });
+    expect(parseSource("https://%")).toEqual({
+      type: "git",
+      url: "https://%",
+    });
+    expect(parseSource("https://example.com/page#section")).toEqual({
+      type: "well-known",
+      url: "https://example.com/page#section",
     });
   });
 });

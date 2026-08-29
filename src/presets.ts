@@ -88,7 +88,11 @@ export async function syncPreset(sourceInput: string, pulseDir: string): Promise
   const manifest = await readManifest(pulseDir);
   const cachedSource = manifest.sources[sourceKey];
 
-  if (cachedSource !== undefined && (await sourceIsCurrent(pulseDir, cachedSource))) {
+  if (
+    source.type !== "local" &&
+    cachedSource !== undefined &&
+    (await sourceIsCurrent(pulseDir, cachedSource))
+  ) {
     return {
       sourceUrl: sourceKey,
       downloaded: 0,
@@ -106,17 +110,25 @@ export async function syncPreset(sourceInput: string, pulseDir: string): Promise
   for (const remoteFile of files) {
     const url = remoteFile.url.href;
     const previous = previousFiles.get(url);
-    if (previous !== undefined && (await manifestFileIsCurrent(pulseDir, previous))) {
+    const targetIsCurrent =
+      previous !== undefined && (await manifestFileIsCurrent(pulseDir, previous));
+    if (source.type !== "local" && previous !== undefined && targetIsCurrent) {
       nextFiles.push(previous);
       reused += 1;
       continue;
     }
 
     const content = remoteFile.content ?? (await downloadPulse(remoteFile.url));
+    const contentSha256 = sha256(content);
+    if (targetIsCurrent && previous !== undefined && previous.sha256 === contentSha256) {
+      nextFiles.push(previous);
+      reused += 1;
+      continue;
+    }
     downloads.push({
       ...remoteFile,
       content,
-      sha256: sha256(content),
+      sha256: contentSha256,
       managedPath: previous?.path,
     });
   }
@@ -229,12 +241,7 @@ async function sourceIsCurrent(pulseDir: string, source: ManifestSource): Promis
 }
 
 async function manifestFileIsCurrent(pulseDir: string, file: ManifestFile): Promise<boolean> {
-  let filePath: string;
-  try {
-    filePath = resolveManifestPath(pulseDir, file.path);
-  } catch {
-    return false;
-  }
+  const filePath = resolveManifestPath(pulseDir, file.path);
   try {
     const stat = await fs.stat(filePath);
     if (!stat.isFile() || stat.size > PULSE_FILE_LIMIT_BYTES) {
@@ -463,7 +470,7 @@ async function discoverGitHubFiles(source: ParsedSource): Promise<RemoteFile[]> 
     if (files.size >= 100) {
       throw new Error("preset directory contains more than 100 .pulse files");
     }
-    const relativePath = safeUrlPath(entry.path.slice(prefix.length));
+    const relativePath = safeRepositoryPath(entry.path.slice(prefix.length));
     const url = githubRawFileUrl(repository.owner, repository.repo, resolvedRef, entry.path);
     files.set(url.href, { url, relativePath });
   }
@@ -541,7 +548,7 @@ async function discoverGitLabFiles(source: ParsedSource): Promise<RemoteFile[]> 
     if (files.size >= 100) {
       throw new Error("preset directory contains more than 100 .pulse files");
     }
-    const relativePath = safeUrlPath(entry.path.slice(prefix.length));
+    const relativePath = safeRepositoryPath(entry.path.slice(prefix.length));
     const url = gitLabRawFileUrl(repository, ref, entry.path);
     files.set(url.href, { url, relativePath });
   }
@@ -852,6 +859,15 @@ function safeLocalPath(localPath: string): string {
     .map((segment) => encodeURIComponent(segment))
     .join("/");
   return safeUrlPath(encoded);
+}
+
+function safeRepositoryPath(repositoryPath: string): string {
+  return safeUrlPath(
+    repositoryPath
+      .split("/")
+      .map((segment) => encodeURIComponent(segment))
+      .join("/"),
+  );
 }
 
 function sanitizePathSegment(encodedSegment: string): string {
