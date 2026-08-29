@@ -2,7 +2,7 @@
 
 [![npm](https://img.shields.io/npm/v/%40zakotoys%2Fdglab-mcp?logo=npm&logoColor=white)](https://www.npmjs.com/package/@zakotoys/dglab-mcp)
 [![CI](https://github.com/zakotoys/dglab-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/zakotoys/dglab-mcp/actions/workflows/ci.yml)
-[![License: GPL-3.0-only](https://img.shields.io/badge/license-GPL--3.0--only-blue)](LICENSE)
+[![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 
 [English](README.md) | [简体中文](README.zh-CN.md) | **日本語**
 
@@ -220,4 +220,4 @@ HTTP 通信、GUI、生フレーム、Opossum の出力制御は対象外です�
 
 ## ライセンス
 
-[GPL-3.0-only](LICENSE)
+[GPL-3.0](LICENSE)
