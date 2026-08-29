@@ -179,6 +179,33 @@ describe("syncPreset", () => {
     expect(await fs.readFile(path.join(pulseDir, "second.pulse"), "utf8")).toBe(PULSE_B);
   });
 
+  it("keeps a locally modified file when it disappears from a remote directory", async () => {
+    let includeFirst = true;
+    const { origin } = await startHttpServer((request, response) => {
+      response.setHeader("content-type", request.url === "/library/" ? "text/html" : "text/plain");
+      if (request.url === "/library/") {
+        response.end(
+          `${includeFirst ? '<a href="first.pulse">first</a>' : ""}<a href="second.pulse">second</a>`,
+        );
+      } else if (request.url === "/library/first.pulse") {
+        response.end(PULSE_A);
+      } else if (request.url === "/library/second.pulse") {
+        response.end(PULSE_B);
+      } else {
+        response.writeHead(404).end();
+      }
+    });
+    const pulseDir = await makePulseDir();
+    const source = `${origin}/library/`;
+
+    await syncPreset(source, pulseDir);
+    await fs.writeFile(path.join(pulseDir, "first.pulse"), "local edit", "utf8");
+    includeFirst = false;
+
+    await expect(syncPreset(source, pulseDir)).resolves.toMatchObject({ files: 1 });
+    expect(await fs.readFile(path.join(pulseDir, "first.pulse"), "utf8")).toBe("local edit");
+  });
+
   it("uses response types to distinguish files from dotted directories", async () => {
     const { origin } = await startHttpServer((request, response) => {
       if (request.url === "/library/") {
@@ -343,6 +370,39 @@ describe("syncPreset", () => {
       );
       expect(result).toMatchObject({ downloaded: 1, reused: 0, files: 1 });
       expect(await fs.readFile(path.join(pulseDir, "pulses", "root.pulse"), "utf8")).toBe(PULSE_A);
+    } finally {
+      fetchMock.mockRestore();
+    }
+  });
+
+  it("includes shorthand repository subpaths in the source cache key", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes("/git/trees/HEAD")) {
+        return new Response("", { status: 404 });
+      }
+      if (url.includes("/git/trees/main")) {
+        expect(new URL(url).searchParams.get("recursive")).toBe("1");
+        return new Response(
+          JSON.stringify({ truncated: false, tree: [{ type: "blob", path: "pulses/root.pulse" }] }),
+        );
+      }
+      if (url === "https://raw.githubusercontent.com/owner/repo/main/pulses/root.pulse") {
+        return new Response(PULSE_A);
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    const pulseDir = await makePulseDir();
+
+    try {
+      const result = await syncPreset("owner/repo/pulses", pulseDir);
+      expect(result).toMatchObject({ downloaded: 1, reused: 0, files: 1 });
+      const manifest = JSON.parse(
+        await fs.readFile(path.join(pulseDir, PRESET_MANIFEST_FILE), "utf8"),
+      ) as { sources: Record<string, unknown> };
+      expect(Object.keys(manifest.sources)).toEqual([
+        "https://github.com/owner/repo.git?path=pulses",
+      ]);
     } finally {
       fetchMock.mockRestore();
     }
