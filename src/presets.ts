@@ -92,6 +92,7 @@ export async function syncPreset(sourceInput: string, pulseDir: string): Promise
   if (
     source.type !== "local" &&
     cachedSource !== undefined &&
+    cachedSource.kind === "file" &&
     (await sourceIsCurrent(pulseDir, cachedSource))
   ) {
     return {
@@ -150,6 +151,9 @@ export async function syncPreset(sourceInput: string, pulseDir: string): Promise
   }
 
   nextFiles.sort((a, b) => a.url.localeCompare(b.url));
+  if (cachedSource?.kind === "directory") {
+    await removeStaleManagedFiles(pulseDir, manifest, cachedSource, nextFiles);
+  }
   manifest.sources[sourceKey] = { kind, files: nextFiles };
   await writeManifest(pulseDir, manifest);
 
@@ -171,6 +175,24 @@ function manifestPathReferenceCount(manifest: Manifest, managedPath: string): nu
     }
   }
   return references;
+}
+
+async function removeStaleManagedFiles(
+  pulseDir: string,
+  manifest: Manifest,
+  previousSource: ManifestSource,
+  nextFiles: ManifestFile[],
+): Promise<void> {
+  const nextUrls = new Set(nextFiles.map((file) => file.url));
+  for (const previous of previousSource.files) {
+    if (nextUrls.has(previous.url) || manifestPathReferenceCount(manifest, previous.path) !== 1) {
+      continue;
+    }
+    if (!(await manifestFileIsCurrent(pulseDir, previous))) {
+      continue;
+    }
+    await fs.rm(resolveManifestPath(pulseDir, previous.path), { force: true });
+  }
 }
 
 function sourceKeyFor(source: ParsedSource): string {

@@ -135,16 +135,48 @@ describe("syncPreset", () => {
     const requestCount = requests.length;
     const cached = await syncPreset(source, pulseDir);
     expect(cached).toMatchObject({ downloaded: 0, reused: 2, files: 2 });
-    expect(requests).toHaveLength(requestCount);
+    expect(requests).toHaveLength(requestCount + 2);
 
     await fs.rm(path.join(pulseDir, "nested", "deep wave.pulse"));
     const repaired = await syncPreset(source, pulseDir);
     expect(repaired).toMatchObject({ downloaded: 1, reused: 1, files: 2 });
-    expect(requests.slice(requestCount)).toEqual([
+    expect(requests.slice(requestCount + 2)).toEqual([
       "/library/",
       "/library/nested",
       "/library/nested/deep%20wave.pulse",
     ]);
+  });
+
+  it("refreshes remote directory listings and removes stale managed files", async () => {
+    let includeFirst = true;
+    const { origin } = await startHttpServer((request, response) => {
+      response.setHeader("content-type", request.url === "/library/" ? "text/html" : "text/plain");
+      if (request.url === "/library/") {
+        response.end(
+          `${includeFirst ? '<a href="first.pulse">first</a>' : ""}<a href="second.pulse">second</a>`,
+        );
+      } else if (request.url === "/library/first.pulse") {
+        response.end(PULSE_A);
+      } else if (request.url === "/library/second.pulse") {
+        response.end(PULSE_B);
+      } else {
+        response.writeHead(404).end();
+      }
+    });
+    const pulseDir = await makePulseDir();
+    const source = `${origin}/library/`;
+
+    expect(await syncPreset(source, pulseDir)).toMatchObject({ downloaded: 2, files: 2 });
+    includeFirst = false;
+    expect(await syncPreset(source, pulseDir)).toMatchObject({
+      downloaded: 0,
+      reused: 1,
+      files: 1,
+    });
+    await expect(fs.stat(path.join(pulseDir, "first.pulse"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    expect(await fs.readFile(path.join(pulseDir, "second.pulse"), "utf8")).toBe(PULSE_B);
   });
 
   it("uses response types to distinguish files from dotted directories", async () => {
@@ -246,7 +278,7 @@ describe("syncPreset", () => {
 
       const cached = await syncPreset(source, pulseDir);
       expect(cached).toMatchObject({ downloaded: 0, reused: 2, files: 2 });
-      expect(fetchMock).toHaveBeenCalledTimes(5);
+      expect(fetchMock).toHaveBeenCalledTimes(8);
     } finally {
       fetchMock.mockRestore();
     }
