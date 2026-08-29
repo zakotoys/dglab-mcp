@@ -51,8 +51,8 @@ Use this MCP server command in the client's configuration:
 }
 ```
 
-To install a remote `.pulse` file or recursively install an HTML directory
-listing, add `--preset` (or `-p`) and its URL:
+To install `.pulse` files from any supported source, add `--preset` (or `-p`)
+and its source. For example, this imports a GitHub tree recursively:
 
 ```json
 {
@@ -61,7 +61,7 @@ listing, add `--preset` (or `-p`) and its URL:
     "-y",
     "@zakotoys/dglab-mcp@latest",
     "--preset",
-    "https://example.com/pulses/"
+    "https://github.com/zakotoys/dglab-pulse-collect/tree/main/pulses/pulse-001"
   ]
 }
 ```
@@ -196,16 +196,19 @@ The directory is rescanned recursively on every list/play call. Files are limite
 to 64 KiB, and the catalog accepts at most 100 files. Names match built-in ids and
 labels case- and separator-insensitively, but matching is exact rather than fuzzy.
 
-At startup, `--preset <url>` or `-p <url>` downloads either one `.pulse` URL or
-all `.pulse` links in a same-origin HTML directory tree. GitHub `tree/<ref>/...`
-URLs are resolved recursively through the Git Trees API, and GitHub
-`blob/<ref>/.../*.pulse` URLs are accepted as single files. Relative
-subdirectories are preserved. The server writes `manifest.json` in
-`DGLAB_PULSE_DIR` with each source URL, local path, and SHA-256 hash. On later
-starts, a source whose local files still match the manifest is used without
-another network request; missing or modified managed files are downloaded
-again. Download and cache diagnostics go to stderr so stdout remains
-exclusively available to MCP JSON-RPC.
+At startup, `--preset <source>` or `-p <source>` uses the same source grammar as
+`npx skills`: local paths, GitHub/GitLab repository or tree sources, GitHub
+shorthand (`owner/repo`), direct `.pulse` downloads, and well-known HTTP(S)
+directory listings. GitHub and GitLab repository trees are traversed through
+their repository APIs; generic HTTP directories are crawled recursively on the
+same origin. Relative subdirectories are preserved. Direct git clone sources
+are supported for repositories containing `.pulse` files. Hosted archive URLs
+are recognized as download sources but are not extracted; use a direct `.pulse`
+URL instead. The server writes `manifest.json` in `DGLAB_PULSE_DIR` with each
+source, local path, and SHA-256 hash. On later starts, a source whose local
+files still match the manifest is used without another network request; missing
+or modified managed files are downloaded again. Download and cache diagnostics
+go to stderr so stdout remains exclusively available to MCP JSON-RPC.
 
 ## Development
 

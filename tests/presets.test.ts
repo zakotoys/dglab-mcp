@@ -4,7 +4,7 @@ import { createServer, type Server } from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { PRESET_MANIFEST_FILE, parsePresetUrl, syncPreset } from "../src/presets.js";
+import { PRESET_MANIFEST_FILE, syncPreset } from "../src/presets.js";
 import { scanPulseDirectory } from "../src/waveforms/catalog.js";
 
 const PULSE_A = "Dungeonlab+pulse:Alpha=0,0,0,1,1/10-0,50-100";
@@ -46,31 +46,6 @@ afterEach(async () => {
 });
 
 describe("syncPreset", () => {
-  it("parses preset URL shapes without mutating the input", () => {
-    const source = new URL(
-      "https://github.com/zakotoys/dglab-pulse-collect/tree/main/pulses/pulse-001#fragment",
-    );
-    const parsed = parsePresetUrl(source);
-
-    expect(source.hash).toBe("#fragment");
-    expect(parsed).toMatchObject({
-      kind: "github-tree",
-      source: {
-        owner: "zakotoys",
-        repo: "dglab-pulse-collect",
-        ref: "main",
-        directoryPath: "pulses/pulse-001",
-      },
-    });
-    expect(parsePresetUrl(new URL("https://example.com/wave.pulse"))).toMatchObject({
-      kind: "file",
-      relativePath: "wave.pulse",
-    });
-    expect(parsePresetUrl(new URL("https://example.com/pulses/"))).toMatchObject({
-      kind: "directory",
-    });
-  });
-
   it("downloads a single pulse once and verifies it from the hash manifest", async () => {
     let requests = 0;
     const { origin } = await startHttpServer((request, response) => {
@@ -83,7 +58,7 @@ describe("syncPreset", () => {
       response.writeHead(404).end();
     });
     const pulseDir = await makePulseDir();
-    const source = new URL(`${origin}/alpha.pulse`);
+    const source = `${origin}/alpha.pulse`;
 
     const first = await syncPreset(source, pulseDir);
     expect(first).toMatchObject({ downloaded: 1, reused: 0, files: 1 });
@@ -96,8 +71,8 @@ describe("syncPreset", () => {
       sources: Record<string, { files: Array<{ path: string; sha256: string }> }>;
     };
     expect(manifest.version).toBe(1);
-    expect(manifest.sources[source.href]!.files[0]).toEqual({
-      url: source.href,
+    expect(manifest.sources[source]!.files[0]).toEqual({
+      url: source,
       path: "alpha.pulse",
       sha256: createHash("sha256").update(PULSE_A).digest("hex"),
     });
@@ -134,7 +109,7 @@ describe("syncPreset", () => {
       }
     });
     const pulseDir = await makePulseDir();
-    const source = new URL(`${origin}/library/`);
+    const source = `${origin}/library/`;
 
     const result = await syncPreset(source, pulseDir);
     expect(result).toMatchObject({ downloaded: 2, reused: 0, files: 2 });
@@ -161,6 +136,21 @@ describe("syncPreset", () => {
       "/library/nested",
       "/library/nested/deep%20wave.pulse",
     ]);
+  });
+
+  it("recursively imports local source directories", async () => {
+    const sourceDir = await fs.mkdtemp(path.join(os.tmpdir(), "dglab-local-preset-"));
+    tmpDirs.push(sourceDir);
+    await fs.mkdir(path.join(sourceDir, "nested"));
+    await fs.writeFile(path.join(sourceDir, "root.pulse"), PULSE_A);
+    await fs.writeFile(path.join(sourceDir, "nested", "deep.pulse"), PULSE_B);
+    await fs.writeFile(path.join(sourceDir, "ignore.txt"), "ignored");
+    const pulseDir = await makePulseDir();
+
+    const result = await syncPreset(sourceDir, pulseDir);
+    expect(result).toMatchObject({ downloaded: 2, reused: 0, files: 2 });
+    expect(await fs.readFile(path.join(pulseDir, "root.pulse"), "utf8")).toBe(PULSE_A);
+    expect(await fs.readFile(path.join(pulseDir, "nested", "deep.pulse"), "utf8")).toBe(PULSE_B);
   });
 
   it("resolves GitHub tree URLs through the recursive tree API", async () => {
@@ -196,9 +186,7 @@ describe("syncPreset", () => {
       throw new Error(`unexpected fetch ${url}`);
     });
     const pulseDir = await makePulseDir();
-    const source = new URL(
-      "https://github.com/zakotoys/dglab-pulse-collect/tree/main/pulses/pulse-001",
-    );
+    const source = "https://github.com/zakotoys/dglab-pulse-collect/tree/main/pulses/pulse-001";
 
     try {
       const result = await syncPreset(source, pulseDir);
@@ -209,15 +197,67 @@ describe("syncPreset", () => {
       const cached = await syncPreset(source, pulseDir);
       expect(cached).toMatchObject({ downloaded: 0, reused: 2, files: 2 });
       expect(fetchMock).toHaveBeenCalledTimes(3);
+    } finally {
+      fetchMock.mockRestore();
+    }
+  });
 
-      const blob = await syncPreset(
-        new URL(
-          "https://github.com/zakotoys/dglab-pulse-collect/blob/main/pulses/pulse-001/root.pulse",
-        ),
+  it("resolves a GitHub repository URL from the default HEAD tree", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (
+        url.startsWith("https://api.github.com/repos/zakotoys/dglab-pulse-collect/git/trees/HEAD")
+      ) {
+        return new Response(
+          JSON.stringify({
+            truncated: false,
+            tree: [{ path: "pulses/root.pulse", type: "blob" }],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (
+        url ===
+        "https://raw.githubusercontent.com/zakotoys/dglab-pulse-collect/HEAD/pulses/root.pulse"
+      ) {
+        return new Response(PULSE_A, { status: 200 });
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    const pulseDir = await makePulseDir();
+
+    try {
+      const result = await syncPreset(
+        "https://github.com/zakotoys/dglab-pulse-collect.git",
         pulseDir,
       );
-      expect(blob).toMatchObject({ downloaded: 1, reused: 0, files: 1 });
-      expect(fetchMock).toHaveBeenCalledTimes(4);
+      expect(result).toMatchObject({ downloaded: 1, reused: 0, files: 1 });
+      expect(await fs.readFile(path.join(pulseDir, "pulses", "root.pulse"), "utf8")).toBe(PULSE_A);
+    } finally {
+      fetchMock.mockRestore();
+    }
+  });
+
+  it("resolves GitLab tree URLs through the repository tree API", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes("gitlab.com/api/v4/projects/group%2Frepo/repository/tree")) {
+        return new Response(JSON.stringify([{ type: "blob", path: "pulses/wave.pulse" }]), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url === "https://gitlab.com/group/repo/-/raw/main/pulses/wave.pulse") {
+        return new Response(PULSE_A, { status: 200 });
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    const pulseDir = await makePulseDir();
+
+    try {
+      const result = await syncPreset("https://gitlab.com/group/repo/-/tree/main/pulses", pulseDir);
+      expect(result).toMatchObject({ downloaded: 1, reused: 0, files: 1 });
+      expect(await fs.readFile(path.join(pulseDir, "wave.pulse"), "utf8")).toBe(PULSE_A);
     } finally {
       fetchMock.mockRestore();
     }
@@ -229,8 +269,8 @@ describe("syncPreset", () => {
     });
     const pulseDir = await makePulseDir();
 
-    await syncPreset(new URL(`${origin}/alpha/same.pulse`), pulseDir);
-    await syncPreset(new URL(`${origin}/beta/same.pulse`), pulseDir);
+    await syncPreset(`${origin}/alpha/same.pulse`, pulseDir);
+    await syncPreset(`${origin}/beta/same.pulse`, pulseDir);
 
     const files = (await fs.readdir(pulseDir)).filter((file) => file.endsWith(".pulse")).sort();
     const collision = files.find((file) => file !== "same.pulse");
@@ -266,18 +306,14 @@ describe("syncPreset", () => {
   ])("rejects an %s manifest before making a request", async (_name, manifest, expected) => {
     const pulseDir = await makePulseDir();
     await fs.writeFile(path.join(pulseDir, PRESET_MANIFEST_FILE), manifest, "utf8");
-    await expect(syncPreset(new URL("https://example.com/wave.pulse"), pulseDir)).rejects.toThrow(
-      expected,
-    );
+    await expect(syncPreset("https://example.com/wave.pulse", pulseDir)).rejects.toThrow(expected);
   });
 
   it("rejects invalid remote pulse content without writing a manifest", async () => {
     const { origin } = await startHttpServer((_request, response) => response.end("not a pulse"));
     const pulseDir = await makePulseDir();
 
-    await expect(syncPreset(new URL(`${origin}/bad.pulse`), pulseDir)).rejects.toThrow(
-      /invalid preset/,
-    );
+    await expect(syncPreset(`${origin}/bad.pulse`, pulseDir)).rejects.toThrow(/invalid preset/);
     await expect(fs.stat(path.join(pulseDir, PRESET_MANIFEST_FILE))).rejects.toMatchObject({
       code: "ENOENT",
     });
@@ -287,9 +323,7 @@ describe("syncPreset", () => {
     const { origin } = await startHttpServer((_request, response) => response.writeHead(404).end());
     const pulseDir = await makePulseDir();
 
-    await expect(syncPreset(new URL(`${origin}/missing.pulse`), pulseDir)).rejects.toThrow(
-      /HTTP 404/,
-    );
+    await expect(syncPreset(`${origin}/missing.pulse`, pulseDir)).rejects.toThrow(/HTTP 404/);
     expect(await fs.readdir(pulseDir)).toEqual([]);
   });
 
@@ -297,7 +331,7 @@ describe("syncPreset", () => {
     const { origin } = await startHttpServer((_request, response) => response.end("<html></html>"));
     const pulseDir = await makePulseDir();
 
-    await expect(syncPreset(new URL(`${origin}/empty`), pulseDir)).rejects.toThrow(
+    await expect(syncPreset(`${origin}/empty`, pulseDir)).rejects.toThrow(
       /contains no \.pulse files/,
     );
   });
@@ -306,7 +340,7 @@ describe("syncPreset", () => {
     const { origin } = await startHttpServer((_request, response) => response.writeHead(404).end());
     const pulseDir = await makePulseDir();
 
-    await expect(syncPreset(new URL(`${origin}/missing/`), pulseDir)).rejects.toThrow(/HTTP 404/);
+    await expect(syncPreset(`${origin}/missing/`, pulseDir)).rejects.toThrow(/HTTP 404/);
   });
 
   it("rejects a pulse whose declared size exceeds the file limit", async () => {
@@ -316,7 +350,7 @@ describe("syncPreset", () => {
     });
     const pulseDir = await makePulseDir();
 
-    await expect(syncPreset(new URL(`${origin}/large.pulse`), pulseDir)).rejects.toThrow(
+    await expect(syncPreset(`${origin}/large.pulse`, pulseDir)).rejects.toThrow(
       /exceeding the 65536-byte limit/,
     );
   });
@@ -328,7 +362,7 @@ describe("syncPreset", () => {
     });
     const pulseDir = await makePulseDir();
 
-    await expect(syncPreset(new URL(`${origin}/chunked.pulse`), pulseDir)).rejects.toThrow(
+    await expect(syncPreset(`${origin}/chunked.pulse`, pulseDir)).rejects.toThrow(
       /response exceeds the 65536-byte limit/,
     );
   });

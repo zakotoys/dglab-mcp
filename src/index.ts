@@ -35,8 +35,8 @@ async function main(): Promise<void> {
   const options = loadCliOptionsOrExit();
   const config = loadConfigOrExit();
 
-  if (options.presetUrl !== undefined) {
-    const result = await syncPreset(options.presetUrl, config.pulseDir);
+  if (options.presetSource !== undefined) {
+    const result = await syncPreset(options.presetSource, config.pulseDir);
     log("preset synchronization complete", { ...result });
   }
 

@@ -288,9 +288,9 @@ describe("dglab-mcp stdio subprocess", () => {
     if (typeof presetAddress !== "object" || presetAddress === null) {
       throw new Error("preset test server has no TCP address");
     }
-    const presetUrl = `http://127.0.0.1:${presetAddress.port}/stdio.pulse`;
+    const presetSource = `http://127.0.0.1:${presetAddress.port}/stdio.pulse`;
     try {
-      const child = spawn(process.execPath, [SERVER_ENTRY, "-p", presetUrl], {
+      const child = spawn(process.execPath, [SERVER_ENTRY, "-p", presetSource], {
         env: { ...process.env, DGLAB_RELAY_URL: url, DGLAB_PULSE_DIR: pulseDir },
         stdio: ["pipe", "pipe", "pipe"],
       });
@@ -341,7 +341,9 @@ describe("dglab-mcp stdio subprocess", () => {
       expect(await fs.readFile(path.join(pulseDir, "stdio.pulse"), "utf8")).toContain(
         "Dungeonlab+pulse:Stdio",
       );
-      expect(await fs.readFile(path.join(pulseDir, "manifest.json"), "utf8")).toContain(presetUrl);
+      expect(await fs.readFile(path.join(pulseDir, "manifest.json"), "utf8")).toContain(
+        presetSource,
+      );
       expect(stderr.join("")).toContain("dglab-mcp");
     } finally {
       await new Promise<void>((resolve, reject) =>

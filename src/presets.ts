@@ -1,9 +1,13 @@
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { parsePulseText } from "@dg-kit/waveforms";
 import { type DefaultTreeAdapterTypes, parse } from "parse5";
 import { z } from "zod";
+import { type ParsedSource, parseSource } from "./source-parser.js";
 import { PULSE_FILE_LIMIT_BYTES } from "./waveforms/catalog.js";
 
 const MANIFEST_VERSION = 1;
@@ -11,11 +15,17 @@ const FETCH_TIMEOUT_MS = 15_000;
 const DIRECTORY_PAGE_LIMIT_BYTES = 1024 * 1024;
 const GITHUB_TREE_LIMIT_BYTES = 7 * 1024 * 1024;
 const DIRECTORY_PAGE_LIMIT = 1000;
+const GITLAB_PAGE_LIMIT = 1000;
 export const PRESET_MANIFEST_FILE = "manifest.json";
 
 const manifestFileSchema = z.object({
   url: z.url(),
-  path: z.string().min(1),
+  path: z
+    .string()
+    .min(1)
+    .refine((value) => value.toLowerCase().endsWith(".pulse"), {
+      message: "must reference a .pulse file",
+    }),
   sha256: z.string().regex(/^[a-f0-9]{64}$/),
 });
 
@@ -39,6 +49,15 @@ const githubTreeSchema = z.object({
   ),
 });
 
+const gitlabTreeSchema = z.array(
+  z.object({
+    type: z.string(),
+    path: z.string().min(1),
+  }),
+);
+
+const gitlabProjectSchema = z.object({ default_branch: z.string().min(1) });
+
 type Manifest = z.infer<typeof manifestSchema>;
 type ManifestFile = z.infer<typeof manifestFileSchema>;
 type ManifestSource = z.infer<typeof manifestSourceSchema>;
@@ -46,27 +65,8 @@ type ManifestSource = z.infer<typeof manifestSourceSchema>;
 interface RemoteFile {
   url: URL;
   relativePath: string;
+  content?: Buffer;
 }
-
-interface GitHubTreeSource {
-  sourceUrl: URL;
-  owner: string;
-  repo: string;
-  ref: string;
-  directoryPath: string;
-}
-
-interface GitHubBlobSource {
-  owner: string;
-  repo: string;
-  ref: string;
-  filePath: string;
-}
-
-export type ParsedPresetUrl =
-  | { kind: "file"; url: URL; relativePath: string }
-  | { kind: "directory"; url: URL }
-  | { kind: "github-tree"; source: GitHubTreeSource };
 
 interface DownloadedFile extends RemoteFile {
   content: Buffer;
@@ -81,9 +81,9 @@ export interface PresetSyncResult {
   files: number;
 }
 
-export async function syncPreset(sourceUrl: URL, pulseDir: string): Promise<PresetSyncResult> {
-  const normalizedSourceUrl = new URL(normalizeSourceUrl(sourceUrl));
-  const sourceKey = normalizedSourceUrl.href;
+export async function syncPreset(sourceInput: string, pulseDir: string): Promise<PresetSyncResult> {
+  const source = parseSource(sourceInput);
+  const sourceKey = sourceKeyFor(source);
   await fs.mkdir(pulseDir, { recursive: true });
   const manifest = await readManifest(pulseDir);
   const cachedSource = manifest.sources[sourceKey];
@@ -97,7 +97,7 @@ export async function syncPreset(sourceUrl: URL, pulseDir: string): Promise<Pres
     };
   }
 
-  const { kind, files } = await discoverRemoteFiles(normalizedSourceUrl);
+  const { kind, files } = await discoverRemoteFiles(source);
   const previousFiles = new Map(cachedSource?.files.map((file) => [file.url, file]) ?? []);
   const nextFiles: ManifestFile[] = [];
   const downloads: DownloadedFile[] = [];
@@ -112,7 +112,7 @@ export async function syncPreset(sourceUrl: URL, pulseDir: string): Promise<Pres
       continue;
     }
 
-    const content = await downloadPulse(remoteFile.url);
+    const content = remoteFile.content ?? (await downloadPulse(remoteFile.url));
     downloads.push({
       ...remoteFile,
       content,
@@ -144,9 +144,21 @@ export async function syncPreset(sourceUrl: URL, pulseDir: string): Promise<Pres
   };
 }
 
-function normalizeSourceUrl(url: URL): string {
-  const normalized = new URL(url);
+function sourceKeyFor(source: ParsedSource): string {
+  if (source.type === "local") {
+    return pathToFileURL(source.localPath!).href;
+  }
+  if (!source.url.startsWith("http://") && !source.url.startsWith("https://")) {
+    return source.ref === undefined ? source.url : `${source.url}#${source.ref}`;
+  }
+  const normalized = new URL(source.url);
   normalized.hash = "";
+  if (source.ref !== undefined) {
+    normalized.hash = source.ref;
+  }
+  if (source.subpath !== undefined) {
+    normalized.searchParams.set("path", source.subpath);
+  }
   return normalized.href;
 }
 
@@ -224,135 +236,222 @@ async function manifestFileIsCurrent(pulseDir: string, file: ManifestFile): Prom
     return false;
   }
   try {
+    const stat = await fs.stat(filePath);
+    if (!stat.isFile() || stat.size > PULSE_FILE_LIMIT_BYTES) {
+      return false;
+    }
     const content = await fs.readFile(filePath);
-    return content.length <= PULSE_FILE_LIMIT_BYTES && sha256(content) === file.sha256;
+    return sha256(content) === file.sha256;
   } catch {
     return false;
   }
 }
 
 async function discoverRemoteFiles(
-  sourceUrl: URL,
+  source: ParsedSource,
 ): Promise<{ kind: "file" | "directory"; files: RemoteFile[] }> {
-  const parsed = parsePresetUrl(sourceUrl);
-  if (parsed.kind === "file") {
+  if (source.type === "local") {
+    return discoverLocalFiles(source.localPath!);
+  }
+  if (source.type === "github") {
+    const files = await discoverGitHubFiles(source);
+    return directoryResult(source.url, files);
+  }
+  if (source.type === "gitlab") {
+    const files = await discoverGitLabFiles(source);
+    return directoryResult(source.url, files);
+  }
+  if (source.type === "well-known" || source.type === "download") {
+    return discoverHttpFiles(source);
+  }
+  const files = await discoverGitFiles(source);
+  return directoryResult(source.url, files);
+}
+
+function directoryResult(
+  sourceUrl: string,
+  files: RemoteFile[],
+): { kind: "directory"; files: RemoteFile[] } {
+  if (files.length === 0) {
+    throw new Error(`preset directory ${sourceUrl} contains no .pulse files`);
+  }
+  return { kind: "directory", files };
+}
+
+async function discoverHttpFiles(
+  source: ParsedSource,
+): Promise<{ kind: "file" | "directory"; files: RemoteFile[] }> {
+  const url = new URL(source.url);
+  if (isPulseUrl(url)) {
     return {
       kind: "file",
-      files: [{ url: parsed.url, relativePath: parsed.relativePath }],
+      files: [{ url, relativePath: safeUrlPath(path.posix.basename(url.pathname)) }],
     };
   }
+  if (source.type === "download") {
+    throw new Error(`preset download ${source.url} is not a .pulse file`);
+  }
+  return discoverDirectoryFiles(url);
+}
 
-  const files =
-    parsed.kind === "github-tree"
-      ? await discoverGitHubFiles(parsed.source)
-      : await crawlDirectory(parsed.url);
+async function discoverLocalFiles(
+  localPath: string,
+): Promise<{ kind: "file" | "directory"; files: RemoteFile[] }> {
+  const absolutePath = path.resolve(localPath);
+  const stats = await fs.stat(absolutePath);
+  if (stats.isFile()) {
+    if (!isPulsePath(absolutePath)) {
+      throw new Error(`local preset file ${absolutePath} does not end in .pulse`);
+    }
+    return {
+      kind: "file",
+      files: [
+        {
+          url: pathToFileURL(absolutePath),
+          relativePath: safeLocalPath(path.basename(absolutePath)),
+        },
+      ],
+    };
+  }
+  if (!stats.isDirectory()) {
+    throw new Error(`local preset source ${absolutePath} is not a file or directory`);
+  }
+
+  const files: RemoteFile[] = [];
+  const queue = [absolutePath];
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    const entries = await fs.readdir(current, { withFileTypes: true });
+    for (const entry of entries) {
+      const entryPath = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        queue.push(entryPath);
+        continue;
+      }
+      if (!entry.isFile() || !isPulsePath(entryPath)) {
+        continue;
+      }
+      if (files.length >= 100) {
+        throw new Error("preset directory contains more than 100 .pulse files");
+      }
+      const relativePath = path.relative(absolutePath, entryPath);
+      files.push({
+        url: pathToFileURL(entryPath),
+        relativePath: safeLocalPath(relativePath),
+      });
+    }
+  }
+  files.sort((left, right) => left.url.href.localeCompare(right.url.href));
+  if (files.length === 0) {
+    throw new Error(`preset directory ${absolutePath} contains no .pulse files`);
+  }
+  return { kind: "directory", files };
+}
+
+async function discoverGitFiles(source: ParsedSource): Promise<RemoteFile[]> {
+  const tempDir = await fs.mkdtemp(path.join(tmpdir(), "dglab-git-preset-"));
+  try {
+    const args = ["clone", "--depth", "1"];
+    if (source.ref !== undefined) {
+      args.push("--branch", source.ref);
+    }
+    args.push(source.url, tempDir);
+    await new Promise<void>((resolve, reject) => {
+      execFile("git", args, { timeout: FETCH_TIMEOUT_MS, windowsHide: true }, (error) =>
+        error ? reject(error) : resolve(),
+      );
+    });
+
+    const root = source.subpath === undefined ? tempDir : path.join(tempDir, source.subpath);
+    const discovered = await discoverLocalFiles(root);
+    const files = await Promise.all(
+      discovered.files.map(async (file) => ({
+        url: gitSourceFileUrl(source, file.relativePath),
+        relativePath: file.relativePath,
+        content: await readLocalPulse(fileURLToPath(file.url), file.url.href),
+      })),
+    );
+    return files;
+  } catch (error) {
+    throw new Error(`failed to fetch git preset ${source.url}: ${(error as Error).message}`);
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+}
+
+function gitSourceFileUrl(source: ParsedSource, relativePath: string): URL {
+  const url = new URL("git+preset://source/file");
+  url.searchParams.set("source", source.url);
+  if (source.ref !== undefined) {
+    url.searchParams.set("ref", source.ref);
+  }
+  url.searchParams.set("path", relativePath);
+  return url;
+}
+
+function isPulsePath(filePath: string): boolean {
+  return path.extname(filePath).toLowerCase() === ".pulse";
+}
+
+async function discoverDirectoryFiles(
+  sourceUrl: URL,
+): Promise<{ kind: "file" | "directory"; files: RemoteFile[] }> {
+  const files = await crawlDirectory(sourceUrl);
   if (files.length === 0) {
     throw new Error(`preset directory ${sourceUrl.href} contains no .pulse files`);
   }
   return { kind: "directory", files };
 }
 
-export function parsePresetUrl(sourceUrl: URL): ParsedPresetUrl {
-  const url = new URL(sourceUrl);
-  if (isPulseUrl(url)) {
-    const githubBlob = parseGitHubBlobUrl(url);
-    return {
-      kind: "file",
-      url: githubBlob === undefined ? url : githubRawFileUrl(githubBlob, githubBlob.filePath),
-      relativePath: safeUrlPath(path.posix.basename(url.pathname)),
-    };
+async function discoverGitHubFiles(source: ParsedSource): Promise<RemoteFile[]> {
+  const repository = parseRepositoryUrl(source.url);
+  const refs = source.ref === undefined ? ["HEAD", "main", "master"] : [source.ref];
+  let treeResponse: Response | undefined;
+  let resolvedRef: string | undefined;
+  for (const ref of refs) {
+    const apiUrl = new URL(
+      `https://api.github.com/repos/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.repo)}/git/trees/${encodeURIComponent(ref)}`,
+    );
+    apiUrl.searchParams.set("recursive", "1");
+    const response = await fetch(apiUrl, {
+      headers: {
+        accept: "application/vnd.github+json",
+        "user-agent": "dglab-mcp",
+      },
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
+    if (response.status === 404 && source.ref === undefined) {
+      continue;
+    }
+    treeResponse = response;
+    resolvedRef = ref;
+    break;
   }
-
-  const githubTree = parseGitHubTreeUrl(url);
-  if (githubTree !== undefined) {
-    return { kind: "github-tree", source: githubTree };
+  if (treeResponse === undefined || resolvedRef === undefined) {
+    throw new Error(`failed to resolve GitHub preset repository ${source.url}`);
   }
-  return { kind: "directory", url };
-}
-
-function parseGitHubTreeUrl(url: URL): GitHubTreeSource | undefined {
-  if (url.hostname.toLowerCase() !== "github.com") {
-    return undefined;
-  }
-  const segments = url.pathname.split("/").filter((segment) => segment !== "");
-  if (segments.length < 4 || segments[2]?.toLowerCase() !== "tree") {
-    return undefined;
-  }
-  try {
-    return {
-      sourceUrl: url,
-      owner: decodeURIComponent(segments[0]!),
-      repo: decodeURIComponent(segments[1]!),
-      ref: decodeURIComponent(segments[3]!),
-      directoryPath: segments
-        .slice(4)
-        .map((segment) => decodeURIComponent(segment))
-        .join("/"),
-    };
-  } catch {
-    throw new Error(`invalid GitHub tree URL ${url.href}`);
-  }
-}
-
-function parseGitHubBlobUrl(url: URL): GitHubBlobSource | undefined {
-  if (url.hostname.toLowerCase() !== "github.com") {
-    return undefined;
-  }
-  const segments = url.pathname.split("/").filter((segment) => segment !== "");
-  if (segments.length < 5 || segments[2]?.toLowerCase() !== "blob") {
-    return undefined;
-  }
-  try {
-    return {
-      owner: decodeURIComponent(segments[0]!),
-      repo: decodeURIComponent(segments[1]!),
-      ref: decodeURIComponent(segments[3]!),
-      filePath: segments
-        .slice(4)
-        .map((segment) => decodeURIComponent(segment))
-        .join("/"),
-    };
-  } catch {
-    throw new Error(`invalid GitHub blob URL ${url.href}`);
-  }
-}
-
-async function discoverGitHubFiles(source: GitHubTreeSource): Promise<RemoteFile[]> {
-  const apiUrl = new URL(
-    `https://api.github.com/repos/${encodeURIComponent(source.owner)}/${encodeURIComponent(source.repo)}/git/trees/${encodeURIComponent(source.ref)}`,
-  );
-  apiUrl.searchParams.set("recursive", "1");
-  const response = await fetch(apiUrl, {
-    headers: {
-      accept: "application/vnd.github+json",
-      "user-agent": "dglab-mcp",
-    },
-    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-  });
-  if (!response.ok) {
+  if (!treeResponse.ok) {
     throw new Error(
-      `failed to fetch GitHub preset tree ${source.sourceUrl.href}: HTTP ${response.status}`,
+      `failed to fetch GitHub preset tree ${source.url}: HTTP ${treeResponse.status}`,
     );
   }
 
-  const body = await readBoundedResponse(response, GITHUB_TREE_LIMIT_BYTES);
+  const body = await readBoundedResponse(treeResponse, GITHUB_TREE_LIMIT_BYTES);
   let value: unknown;
   try {
     value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(body));
   } catch (error) {
-    throw new Error(
-      `invalid GitHub tree response for ${source.sourceUrl.href}: ${(error as Error).message}`,
-    );
+    throw new Error(`invalid GitHub tree response for ${source.url}: ${(error as Error).message}`);
   }
   const parsed = githubTreeSchema.safeParse(value);
   if (!parsed.success) {
-    throw new Error(`invalid GitHub tree response for ${source.sourceUrl.href}`);
+    throw new Error(`invalid GitHub tree response for ${source.url}`);
   }
   if (parsed.data.truncated) {
-    throw new Error(`GitHub tree for ${source.sourceUrl.href} is too large to traverse safely`);
+    throw new Error(`GitHub tree for ${source.url} is too large to traverse safely`);
   }
 
-  const prefix = source.directoryPath === "" ? "" : `${source.directoryPath.replace(/\/+$/g, "")}/`;
+  const prefix = source.subpath === undefined ? "" : `${source.subpath.replace(/\/+$/g, "")}/`;
   const files = new Map<string, RemoteFile>();
   for (const entry of parsed.data.tree) {
     if (entry.type !== "blob" || !entry.path.toLowerCase().endsWith(".pulse")) {
@@ -365,19 +464,145 @@ async function discoverGitHubFiles(source: GitHubTreeSource): Promise<RemoteFile
       throw new Error("preset directory contains more than 100 .pulse files");
     }
     const relativePath = safeUrlPath(entry.path.slice(prefix.length));
-    const url = githubRawFileUrl(source, entry.path);
+    const url = githubRawFileUrl(repository.owner, repository.repo, resolvedRef, entry.path);
     files.set(url.href, { url, relativePath });
   }
   return [...files.values()].sort((left, right) => left.url.href.localeCompare(right.url.href));
 }
 
-function githubRawFileUrl(
-  source: Pick<GitHubTreeSource, "owner" | "repo" | "ref"> | GitHubBlobSource,
-  filePath: string,
-): URL {
-  const pathSegments = [source.owner, source.repo, source.ref, ...filePath.split("/")];
+function parseRepositoryUrl(repositoryUrl: string): { owner: string; repo: string } {
+  const parsed = new URL(repositoryUrl);
+  const segments = parsed.pathname.split("/").filter(Boolean);
+  if (segments.length !== 2) {
+    throw new Error(`invalid repository source ${repositoryUrl}`);
+  }
+  return {
+    owner: decodeURIComponent(segments[0]!),
+    repo: decodeURIComponent(segments[1]!).replace(/\.git$/i, ""),
+  };
+}
+
+function githubRawFileUrl(owner: string, repo: string, ref: string, filePath: string): URL {
+  const pathSegments = [owner, repo, ref, ...filePath.split("/")];
   return new URL(
     `https://raw.githubusercontent.com/${pathSegments.map((segment) => encodeURIComponent(segment)).join("/")}`,
+  );
+}
+
+async function discoverGitLabFiles(source: ParsedSource): Promise<RemoteFile[]> {
+  const repository = parseGitLabRepositoryUrl(source.url);
+  const apiBase = `${repository.protocol}//${repository.host}/api/v4`;
+  const projectId = encodeURIComponent(repository.repoPath);
+  const ref = source.ref ?? (await fetchGitLabDefaultBranch(apiBase, projectId, source.url));
+  const entries: Array<{ type: string; path: string }> = [];
+
+  for (let page = 1; page <= GITLAB_PAGE_LIMIT; page += 1) {
+    const apiUrl = new URL(`${apiBase}/projects/${projectId}/repository/tree`);
+    apiUrl.searchParams.set("recursive", "true");
+    apiUrl.searchParams.set("per_page", "100");
+    apiUrl.searchParams.set("page", String(page));
+    apiUrl.searchParams.set("ref", ref);
+    const response = await fetch(apiUrl, {
+      headers: { accept: "application/json", "user-agent": "dglab-mcp" },
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
+    if (!response.ok) {
+      throw new Error(`failed to fetch GitLab preset tree ${source.url}: HTTP ${response.status}`);
+    }
+    const body = await readBoundedResponse(response, DIRECTORY_PAGE_LIMIT_BYTES);
+    let value: unknown;
+    try {
+      value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(body));
+    } catch (error) {
+      throw new Error(
+        `invalid GitLab tree response for ${source.url}: ${(error as Error).message}`,
+      );
+    }
+    const parsed = gitlabTreeSchema.safeParse(value);
+    if (!parsed.success) {
+      throw new Error(`invalid GitLab tree response for ${source.url}`);
+    }
+    entries.push(...parsed.data);
+    const nextPage = response.headers.get("x-next-page");
+    if (nextPage === null || nextPage === "" || parsed.data.length < 100) {
+      break;
+    }
+  }
+
+  const prefix = source.subpath === undefined ? "" : `${source.subpath.replace(/\/+$/g, "")}/`;
+  const files = new Map<string, RemoteFile>();
+  for (const entry of entries) {
+    if (entry.type !== "blob" || !entry.path.toLowerCase().endsWith(".pulse")) {
+      continue;
+    }
+    if (prefix !== "" && !entry.path.startsWith(prefix)) {
+      continue;
+    }
+    if (files.size >= 100) {
+      throw new Error("preset directory contains more than 100 .pulse files");
+    }
+    const relativePath = safeUrlPath(entry.path.slice(prefix.length));
+    const url = gitLabRawFileUrl(repository, ref, entry.path);
+    files.set(url.href, { url, relativePath });
+  }
+  return [...files.values()].sort((left, right) => left.url.href.localeCompare(right.url.href));
+}
+
+async function fetchGitLabDefaultBranch(
+  apiBase: string,
+  projectId: string,
+  sourceUrl: string,
+): Promise<string> {
+  const response = await fetch(`${apiBase}/projects/${projectId}`, {
+    headers: { accept: "application/json", "user-agent": "dglab-mcp" },
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+  });
+  if (!response.ok) {
+    throw new Error(
+      `failed to resolve GitLab preset repository ${sourceUrl}: HTTP ${response.status}`,
+    );
+  }
+  const body = await readBoundedResponse(response, DIRECTORY_PAGE_LIMIT_BYTES);
+  let value: unknown;
+  try {
+    value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(body));
+  } catch (error) {
+    throw new Error(
+      `invalid GitLab repository response for ${sourceUrl}: ${(error as Error).message}`,
+    );
+  }
+  const parsed = gitlabProjectSchema.safeParse(value);
+  if (!parsed.success) {
+    throw new Error(`invalid GitLab repository response for ${sourceUrl}`);
+  }
+  return parsed.data.default_branch;
+}
+
+function parseGitLabRepositoryUrl(repositoryUrl: string): {
+  protocol: string;
+  host: string;
+  repoPath: string;
+} {
+  const parsed = new URL(repositoryUrl);
+  const repoPath = parsed.pathname.replace(/^\//, "").replace(/\.git$/i, "");
+  if (!repoPath.includes("/")) {
+    throw new Error(`invalid GitLab repository source ${repositoryUrl}`);
+  }
+  return { protocol: parsed.protocol, host: parsed.host, repoPath };
+}
+
+function gitLabRawFileUrl(
+  repository: { protocol: string; host: string; repoPath: string },
+  ref: string,
+  filePath: string,
+): URL {
+  const repositoryPath = repository.repoPath
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+  const fileSegments = filePath.split("/").map((segment) => encodeURIComponent(segment));
+  return new URL(
+    `${repository.protocol}//${repository.host}/${repositoryPath}/-/raw/${encodeURIComponent(ref)}/${fileSegments.join("/")}`,
   );
 }
 
@@ -471,6 +696,9 @@ async function downloadPage(url: URL): Promise<{ url: string; html: string }> {
 }
 
 async function downloadPulse(url: URL): Promise<Buffer> {
+  if (url.protocol === "file:") {
+    return readLocalPulse(fileURLToPath(url), url.href);
+  }
   const response = await fetch(url, {
     headers: { accept: "text/plain, application/octet-stream" },
     signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
@@ -485,6 +713,25 @@ async function downloadPulse(url: URL): Promise<Buffer> {
     parsePulseText(text);
   } catch (error) {
     throw new Error(`invalid preset ${url.href}: ${(error as Error).message}`);
+  }
+  return content;
+}
+
+async function readLocalPulse(filePath: string, sourceUrl: string): Promise<Buffer> {
+  let content: Buffer;
+  try {
+    const stat = await fs.stat(filePath);
+    if (!stat.isFile() || stat.size > PULSE_FILE_LIMIT_BYTES) {
+      throw new Error(`response exceeds the ${PULSE_FILE_LIMIT_BYTES}-byte limit`);
+    }
+    content = await fs.readFile(filePath);
+  } catch (error) {
+    throw new Error(`failed to read preset ${sourceUrl}: ${(error as Error).message}`);
+  }
+  try {
+    parsePulseText(new TextDecoder("utf-8", { fatal: true }).decode(content));
+  } catch (error) {
+    throw new Error(`invalid preset ${sourceUrl}: ${(error as Error).message}`);
   }
   return content;
 }
@@ -531,9 +778,12 @@ async function storePulse(
   while (true) {
     const filePath = resolveManifestPath(pulseDir, candidate);
     try {
-      const existing = await fs.readFile(filePath);
-      if (sha256(existing) === hash) {
-        return candidate;
+      const stat = await fs.stat(filePath);
+      if (stat.isFile() && stat.size <= PULSE_FILE_LIMIT_BYTES) {
+        const existing = await fs.readFile(filePath);
+        if (sha256(existing) === hash) {
+          return candidate;
+        }
       }
       suffix += 1;
       candidate = withHashSuffix(requestedPath, hash, suffix);
@@ -593,6 +843,15 @@ function safeUrlPath(urlPath: string): string {
     throw new Error(`unsafe preset path "${urlPath}"`);
   }
   return segments.join("/");
+}
+
+function safeLocalPath(localPath: string): string {
+  const encoded = localPath
+    .split(/[\\/]/)
+    .filter((segment) => segment !== "")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+  return safeUrlPath(encoded);
 }
 
 function sanitizePathSegment(encodedSegment: string): string {

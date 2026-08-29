@@ -1,5 +1,5 @@
 export interface CliOptions {
-  presetUrl?: URL;
+  presetSource?: string;
 }
 
 export class CliArgumentError extends Error {
@@ -10,34 +10,25 @@ export class CliArgumentError extends Error {
 }
 
 export function parseCliArgs(args: string[]): CliOptions {
-  let presetUrl: URL | undefined;
+  let presetSource: string | undefined;
 
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index]!;
     if (argument !== "-p" && argument !== "--preset") {
       throw new CliArgumentError(`unknown argument "${argument}"`);
     }
-    if (presetUrl !== undefined) {
+    if (presetSource !== undefined) {
       throw new CliArgumentError("--preset may only be specified once");
     }
 
     const value = args[index + 1];
     if (value === undefined || value.startsWith("-")) {
-      throw new CliArgumentError(`${argument} requires an HTTP(S) URL`);
+      throw new CliArgumentError(`${argument} requires a source`);
     }
     index += 1;
 
-    try {
-      presetUrl = new URL(value);
-    } catch {
-      throw new CliArgumentError(`${argument} must be a valid URL, got "${value}"`);
-    }
-    if (presetUrl.protocol !== "http:" && presetUrl.protocol !== "https:") {
-      throw new CliArgumentError(
-        `${argument} must use the http: or https: scheme, got "${presetUrl.protocol}"`,
-      );
-    }
+    presetSource = value;
   }
 
-  return { presetUrl };
+  return { presetSource };
 }
