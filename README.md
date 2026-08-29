@@ -1,4 +1,4 @@
-# dglab-mcp
+# @zakotoys/dglab-mcp
 
 [![License: GPL-3.0-only](https://img.shields.io/badge/license-GPL--3.0--only-blue)](LICENSE)
 
@@ -46,7 +46,7 @@ Add to your Claude Desktop config file:
   "mcpServers": {
     "dglab": {
       "command": "cmd",
-      "args": ["/c", "npx", "-y", "dglab-mcp@latest"]
+      "args": ["/c", "npx", "-y", "@zakotoys/dglab-mcp@latest"]
     }
   }
 }
@@ -59,7 +59,7 @@ On macOS or Linux, use this form instead:
   "mcpServers": {
     "dglab": {
       "command": "npx",
-      "args": ["-y", "dglab-mcp@latest"]
+      "args": ["-y", "@zakotoys/dglab-mcp@latest"]
     }
   }
 }
@@ -74,7 +74,7 @@ Add to `~/.cursor/mcp.json` (global) or `.cursor/mcp.json` (project):
   "mcpServers": {
     "dglab": {
       "command": "cmd",
-      "args": ["/c", "npx", "-y", "dglab-mcp@latest"]
+      "args": ["/c", "npx", "-y", "@zakotoys/dglab-mcp@latest"]
     }
   }
 }
@@ -87,7 +87,7 @@ On macOS or Linux:
   "mcpServers": {
     "dglab": {
       "command": "npx",
-      "args": ["-y", "dglab-mcp@latest"]
+      "args": ["-y", "@zakotoys/dglab-mcp@latest"]
     }
   }
 }
@@ -98,7 +98,7 @@ On macOS or Linux:
 Explore and debug the server interactively:
 
 ```bash
-npx @modelcontextprotocol/inspector -y dglab-mcp@latest
+npx @modelcontextprotocol/inspector -y @zakotoys/dglab-mcp@latest
 ```
 
 Inspector opens a browser UI; connect over **stdio**, then call `dglab_connect` from the Tools tab to see the pairing QR code rendered inline.
@@ -198,7 +198,7 @@ GitHub.
 
 One-time setup:
 
-1. If `dglab-mcp` does not exist on npm yet, bootstrap the package once from a
+1. If `@zakotoys/dglab-mcp` does not exist on npm yet, bootstrap the package once from a
    local terminal while logged in to the npm owner account:
 
    ```bash
@@ -208,10 +208,10 @@ One-time setup:
 
    This is the only manual publish; the command runs the package's
    `prepublishOnly` checks first.
-2. On npmjs.com, open the `dglab-mcp` package settings and add a **Trusted
+2. On npmjs.com, open the `@zakotoys/dglab-mcp` package settings and add a **Trusted
    Publisher** for **GitHub Actions**. Set owner to `zakotoys`, repository to
    `dglab-mcp`, and workflow filename to `publish.yml`.
-3. Add the `zakotoys` npm team as a maintainer of `dglab-mcp` in the package's
+3. Add the `zakotoys` npm team as a maintainer of `@zakotoys/dglab-mcp` in the package's
    **Access** settings. Team members then inherit publish and release access.
 4. Ensure the GitHub repository's Actions are enabled and that the default
    branch is `main`.
@@ -225,10 +225,9 @@ git push origin main --follow-tags
 
 Pushing the generated `vX.Y.Z` tag starts the workflow. Monitor it under the
 repository's **Actions** tab; a failed version check or CI run blocks publication.
-The package is public, so users can install it with `npx -y dglab-mcp@latest`.
-The package intentionally remains unscoped; the `zakotoys` npm team owns publish
-access through the package's maintainer permission rather than through an
-`@zakotoys/` rename.
+The package is public, so users can install it with `npx -y @zakotoys/dglab-mcp@latest`.
+The package is scoped to the `zakotoys` npm organization, so organization access
+and Trusted Publishing are managed directly on `@zakotoys/dglab-mcp`.
 
 The test suite includes a fake V4 relay and a fake DG-LAB app (`tests/helpers.ts`) that speak the real protocol, so pairing, telemetry, task lifecycles, safety cutoffs, and both in-memory and stdio MCP transports are exercised end to end without hardware.
 

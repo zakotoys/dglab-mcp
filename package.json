@@ -1,5 +1,5 @@
 {
-  "name": "dglab-mcp",
+  "name": "@zakotoys/dglab-mcp",
   "version": "0.1.0",
   "description": "Local MCP server bridging desktop AI tools to DG-LAB e-stim hardware through the DG-LAB 4 V4 WebSocket relay, with a hardware safety enforcer.",
   "type": "module",
