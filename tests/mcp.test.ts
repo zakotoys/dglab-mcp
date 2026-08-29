@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,6 +15,8 @@ import { registerTools } from "../src/tools.js";
 import { delay, FakeDglabApp, FakeV4Relay } from "./helpers.js";
 
 const SERVER_ENTRY = fileURLToPath(new URL("../dist/index.js", import.meta.url));
+const require = createRequire(import.meta.url);
+const PACKAGE_VERSION = (require("../package.json") as { version: string }).version;
 
 interface World {
   relay: FakeV4Relay;
@@ -34,7 +37,7 @@ async function startLinkedWorld(): Promise<{ world: World; client: Client }> {
     DGLAB_PULSE_DIR: pulseDir,
   });
   const service = new DglabService(config);
-  const server = new McpServer({ name: "dglab-mcp", version: "0.1.0" });
+  const server = new McpServer({ name: "dglab-mcp", version: PACKAGE_VERSION });
   registerTools(server, service, config);
   const client = new Client({ name: "test-client", version: "0.0.1" });
   const [clientTransport, serverTransport] = await InMemoryTransport.createLinkedPair();
