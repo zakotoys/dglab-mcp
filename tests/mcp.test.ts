@@ -132,6 +132,8 @@ describe("MCP server over in-memory transport", () => {
     expect(textOf(status)).toMatch(/Relay paired/);
 
     await client.callTool({ name: "dglab_set_intensity", arguments: { channel: "A", target: 5 } });
+    const heartbeat = await client.callTool({ name: "dglab_heartbeat", arguments: {} });
+    expect(textOf(heartbeat)).toMatch(/lease renewed/);
     const play = await client.callTool({
       name: "dglab_play_waveform",
       arguments: { channel: "A", name: "bubble" },
@@ -220,6 +222,53 @@ describe("MCP server over in-memory transport", () => {
       ((after.structuredContent as Record<string, unknown>).session as Record<string, unknown>)
         .state,
     ).toBe("idle");
+  });
+
+  it("returns INTERNAL envelopes when a tool service fails unexpectedly", async () => {
+    const server = new McpServer({ name: "fake", version: "0.0.1" });
+    const failure = async () => {
+      throw new Error("unexpected failure");
+    };
+    const fakeService = {
+      connect: failure,
+      disconnect: failure,
+      getStatus: failure,
+      setIntensity: failure,
+      adjustIntensity: failure,
+      listWaveforms: failure,
+      playWaveform: failure,
+      playCustomWaveform: failure,
+      stopChannel: failure,
+      emergencyStop: failure,
+      heartbeat: () => {
+        throw new Error("unexpected failure");
+      },
+    };
+    registerTools(server, fakeService as unknown as DglabService, loadConfig({}));
+    const client = new Client({ name: "fake-client", version: "0.0.1" });
+    const [clientTransport, serverTransport] = await InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+    const calls: Array<{ name: string; arguments: Record<string, unknown> }> = [
+      { name: "dglab_connect", arguments: {} },
+      { name: "dglab_disconnect", arguments: {} },
+      { name: "dglab_get_status", arguments: {} },
+      { name: "dglab_set_intensity", arguments: { channel: "A", target: 1 } },
+      { name: "dglab_adjust_intensity", arguments: { channel: "A", delta: 1 } },
+      { name: "dglab_list_waveforms", arguments: {} },
+      { name: "dglab_play_waveform", arguments: { channel: "A", name: "bubble" } },
+      {
+        name: "dglab_play_custom_waveform",
+        arguments: { channel: "A", segments: [{ type: "silence", durationMs: 25 }] },
+      },
+      { name: "dglab_stop_channel", arguments: { channel: "A" } },
+      { name: "dglab_emergency_stop", arguments: {} },
+      { name: "dglab_heartbeat", arguments: {} },
+    ];
+    for (const call of calls) {
+      const result = await client.callTool(call);
+      expect((result.structuredContent as Record<string, unknown>).code).toBe("INTERNAL");
+    }
+    await client.close();
   });
 });
 

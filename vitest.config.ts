@@ -9,6 +9,9 @@ export default defineConfig({
     coverage: {
       provider: "v8",
       include: ["src/**/*.ts"],
+      // The CLI bootstrap runs in a separate child process in integration tests;
+      // keep process wiring out of the in-process business-logic coverage.
+      exclude: ["src/index.ts"],
       reporter: ["text", "lcov"],
     },
   },
