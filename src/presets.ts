@@ -631,7 +631,10 @@ function gitLabRawFileUrl(
 }
 
 async function crawlDirectory(sourceUrl: URL): Promise<RemoteFile[]> {
-  const firstPage = await downloadPage(sourceUrl);
+  const firstPage = await downloadPage(sourceUrl, true);
+  if (firstPage.html === null) {
+    return [];
+  }
   const rootUrl = directoryBaseUrl(new URL(firstPage.url));
   const queue: Array<{ url: URL; html?: string }> = [{ url: rootUrl, html: firstPage.html }];
   const visited = new Set<string>();
@@ -647,9 +650,12 @@ async function crawlDirectory(sourceUrl: URL): Promise<RemoteFile[]> {
       continue;
     }
     visited.add(pageKey);
-    const downloaded = page.html === undefined ? await downloadPage(page.url) : undefined;
+    const downloaded = page.html === undefined ? await downloadPage(page.url, false) : undefined;
     const effectiveUrl = directoryBaseUrl(new URL(downloaded?.url ?? page.url));
     assertWithinDirectory(effectiveUrl, rootUrl);
+    if (downloaded?.html === null) {
+      continue;
+    }
     const html = downloaded?.html ?? page.html!;
 
     for (const href of extractLinks(html)) {
@@ -674,10 +680,7 @@ async function crawlDirectory(sourceUrl: URL): Promise<RemoteFile[]> {
             relativePath: safeUrlPath(relativeUrlPath),
           });
         }
-      } else if (
-        candidate.search === "" &&
-        (candidate.pathname.endsWith("/") || !path.posix.basename(candidate.pathname).includes("."))
-      ) {
+      } else if (candidate.search === "") {
         queue.push({ url: candidate });
       }
     }
@@ -707,16 +710,31 @@ function extractLinks(html: string): string[] {
   return links;
 }
 
-async function downloadPage(url: URL): Promise<{ url: string; html: string }> {
+async function downloadPage(
+  url: URL,
+  required: boolean,
+): Promise<{ url: string; html: string | null }> {
   const response = await fetch(url, {
     headers: { accept: "text/html" },
     signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
   });
   if (!response.ok) {
+    if (!required) {
+      await response.body?.cancel();
+      return { url: response.url || url.href, html: null };
+    }
     throw new Error(`failed to fetch preset directory ${url.href}: HTTP ${response.status}`);
   }
+  const contentType = response.headers.get("content-type");
+  if (contentType !== null && !/^text\/html(?:;|$)/i.test(contentType.trim())) {
+    await response.body?.cancel();
+    return { url: response.url || url.href, html: null };
+  }
   const content = await readBoundedResponse(response, DIRECTORY_PAGE_LIMIT_BYTES);
-  return { url: response.url, html: new TextDecoder("utf-8", { fatal: true }).decode(content) };
+  return {
+    url: response.url || url.href,
+    html: new TextDecoder("utf-8", { fatal: true }).decode(content),
+  };
 }
 
 async function downloadPulse(url: URL): Promise<Buffer> {

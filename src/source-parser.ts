@@ -258,7 +258,10 @@ export function parseSource(input: string): ParsedSource {
     }
   }
 
-  const githubTreeWithPathMatch = input.match(
+  const queryIndex = input.indexOf("?");
+  const hostedRepositoryInput = queryIndex === -1 ? input : input.slice(0, queryIndex);
+
+  const githubTreeWithPathMatch = hostedRepositoryInput.match(
     /^https?:\/\/github\.com\/([^/]+)\/([^/]+)\/tree\/([^/]+)\/(.+?)\/?$/,
   );
   if (githubTreeWithPathMatch) {
@@ -270,7 +273,7 @@ export function parseSource(input: string): ParsedSource {
       subpath: decodeUrlSubpath(subpath!),
     };
   }
-  const githubTreeMatch = input.match(
+  const githubTreeMatch = hostedRepositoryInput.match(
     /^https?:\/\/github\.com\/([^/]+)\/([^/]+)\/tree\/([^/]+)\/?$/,
   );
   if (githubTreeMatch) {
@@ -281,7 +284,9 @@ export function parseSource(input: string): ParsedSource {
       ref: ref!,
     };
   }
-  const githubRepoMatch = input.match(/^https?:\/\/github\.com\/([^/]+)\/([^/]+)(?:\/.*)?$/);
+  const githubRepoMatch = hostedRepositoryInput.match(
+    /^https?:\/\/github\.com\/([^/]+)\/([^/]+)(?:\/.*)?$/,
+  );
   if (githubRepoMatch) {
     const [, owner, repo] = githubRepoMatch;
     return {
@@ -291,7 +296,7 @@ export function parseSource(input: string): ParsedSource {
     };
   }
 
-  const gitlabTreeWithPathMatch = input.match(
+  const gitlabTreeWithPathMatch = hostedRepositoryInput.match(
     /^(https?):\/\/([^/]+)\/(.+?)\/-\/tree\/([^/]+)\/(.+)/,
   );
   if (gitlabTreeWithPathMatch) {
@@ -303,7 +308,9 @@ export function parseSource(input: string): ParsedSource {
       subpath: decodeUrlSubpath(subpath!),
     };
   }
-  const gitlabTreeMatch = input.match(/^(https?):\/\/([^/]+)\/(.+?)\/-\/tree\/([^/]+)\/?$/);
+  const gitlabTreeMatch = hostedRepositoryInput.match(
+    /^(https?):\/\/([^/]+)\/(.+?)\/-\/tree\/([^/]+)\/?$/,
+  );
   if (gitlabTreeMatch) {
     const [, protocol, hostname, repoPath, ref] = gitlabTreeMatch;
     return {
@@ -312,7 +319,9 @@ export function parseSource(input: string): ParsedSource {
       ref: ref!,
     };
   }
-  const gitlabRepoMatch = input.match(/^https?:\/\/gitlab\.com\/(.+?)(?:\.git)?\/?$/);
+  const gitlabRepoMatch = hostedRepositoryInput.match(
+    /^https?:\/\/gitlab\.com\/(.+?)(?:\.git)?\/?$/,
+  );
   if (gitlabRepoMatch) {
     const repoPath = gitlabRepoMatch[1]!;
     if (repoPath.includes("/")) {

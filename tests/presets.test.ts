@@ -97,7 +97,12 @@ describe("syncPreset", () => {
     const { origin } = await startHttpServer((request, response) => {
       const url = request.url ?? "";
       requests.push(url);
-      response.setHeader("content-type", url.endsWith("/") ? "text/html" : "text/plain");
+      response.setHeader(
+        "content-type",
+        url === "/library/" || url === "/library/nested" || url === "/library/nested/"
+          ? "text/html"
+          : "text/plain",
+      );
       if (url === "/library/") {
         response.end(
           '<a href="root.pulse">root</a><a href="root.pulse">duplicate</a><a href="nested">nested</a><a href="page?query=1">query</a><a href="/outside.pulse">outside</a>',
@@ -140,6 +145,37 @@ describe("syncPreset", () => {
       "/library/nested",
       "/library/nested/deep%20wave.pulse",
     ]);
+  });
+
+  it("uses response types to distinguish files from dotted directories", async () => {
+    const { origin } = await startHttpServer((request, response) => {
+      if (request.url === "/library/") {
+        response.writeHead(200, { "content-type": "text/html" });
+        response.end(
+          '<a href="README">file</a><a href="missing">missing</a><a href="waves.v1">directory</a>',
+        );
+      } else if (request.url === "/library/README") {
+        response.writeHead(200, {
+          "content-length": String(1024 * 1024 + 1),
+          "content-type": "text/plain",
+        });
+        response.end();
+      } else if (request.url === "/library/waves.v1") {
+        response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+        response.end('<a href="deep.pulse">deep</a>');
+      } else if (request.url === "/library/waves.v1/deep.pulse") {
+        response.end(PULSE_A);
+      } else {
+        response.writeHead(404).end();
+      }
+    });
+    const pulseDir = await makePulseDir();
+
+    expect(await syncPreset(`${origin}/library/`, pulseDir)).toMatchObject({ files: 1 });
+    expect(await fs.readFile(path.join(pulseDir, "waves.v1", "deep.pulse"), "utf8")).toBe(PULSE_A);
+    await expect(syncPreset(`${origin}/library/README`, await makePulseDir())).rejects.toThrow(
+      /contains no \.pulse files/,
+    );
   });
 
   it("recursively imports local source directories", async () => {
@@ -630,7 +666,9 @@ describe("syncPreset", () => {
   it("rejects unsafe directory redirects and malformed links", async () => {
     const pulseDir = await makePulseDir();
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      const response = new Response('<a href="%E0%A4%A.pulse">bad</a>');
+      const response = new Response('<a href="%E0%A4%A.pulse">bad</a>', {
+        headers: { "content-type": "text/html" },
+      });
       Object.defineProperty(response, "url", { value: String(input) });
       return response;
     });
@@ -645,6 +683,7 @@ describe("syncPreset", () => {
     const redirectFetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const response = new Response(
         String(input).endsWith("/pulses/") ? '<a href="child">child</a>' : "<html></html>",
+        { headers: { "content-type": "text/html" } },
       );
       Object.defineProperty(response, "url", {
         value: String(input).endsWith("/pulses/") ? String(input) : "https://evil.example/outside/",
@@ -852,7 +891,9 @@ describe("syncPreset", () => {
   it("enforces the HTTP directory traversal limit", async () => {
     let page = 0;
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      const response = new Response(`<a href="/pulses/${page++}/">next</a>`);
+      const response = new Response(`<a href="/pulses/${page++}/">next</a>`, {
+        headers: { "content-type": "text/html" },
+      });
       Object.defineProperty(response, "url", { value: String(input) });
       return response;
     });

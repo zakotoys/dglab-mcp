@@ -40,6 +40,12 @@ describe("source-parser", () => {
       ref: "main",
       subpath: "my pulses",
     });
+    expect(parseSource("https://github.com/owner/repo/tree/main/pulses?plain=1")).toEqual({
+      type: "github",
+      url: "https://github.com/owner/repo.git",
+      ref: "main",
+      subpath: "pulses",
+    });
   });
 
   it("does not treat GitHub blob paths as a separate source kind", () => {
@@ -71,6 +77,11 @@ describe("source-parser", () => {
       url: "https://gitlab.com/group/repo.git",
       ref: "main",
       subpath: "my pulses",
+    });
+    expect(parseSource("https://gitlab.com/group/repo/-/tree/main?ref_type=heads")).toEqual({
+      type: "gitlab",
+      url: "https://gitlab.com/group/repo.git",
+      ref: "main",
     });
   });
 
