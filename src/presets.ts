@@ -181,20 +181,20 @@ export async function syncPreset(
   }
 
   nextFiles.sort((a, b) => a.url.localeCompare(b.url));
-  if (nextFiles.length === 0 && options.skipInvalid) {
-    return {
-      sourceUrl: sourceKey,
-      downloaded: 0,
-      reused,
-      files: 0,
-      skipped,
-    };
+  if (nextFiles.length === 0) {
+    if (!options.skipInvalid) {
+      /* c8 ignore next: discovery rejects invalid files before this point in strict mode. */
+      throw new Error(`preset ${sourceInput} contains no valid .pulse files`);
+    }
+    if (cachedSource !== undefined) {
+      await removeStaleManagedFiles(pulseDir, manifest, cachedSource, nextFiles);
+      manifest.sources[sourceKey] = { kind, files: [] };
+      await writeManifest(pulseDir, manifest);
+    }
+    return { sourceUrl: sourceKey, downloaded: 0, reused, files: 0, skipped };
   }
   if (cachedSource?.kind === "directory") {
     await removeStaleManagedFiles(pulseDir, manifest, cachedSource, nextFiles);
-  }
-  if (nextFiles.length === 0) {
-    throw new Error(`preset ${sourceInput} contains no valid .pulse files`);
   }
   manifest.sources[sourceKey] = { kind, files: nextFiles };
   await writeManifest(pulseDir, manifest);
