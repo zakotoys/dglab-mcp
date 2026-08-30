@@ -186,7 +186,7 @@ export async function syncPreset(
       /* c8 ignore next: discovery rejects invalid files before this point in strict mode. */
       throw new Error(`preset ${sourceInput} contains no valid .pulse files`);
     }
-    if (cachedSource !== undefined) {
+    if (cachedSource?.kind === "directory") {
       await removeStaleManagedFiles(pulseDir, manifest, cachedSource, nextFiles);
       manifest.sources[sourceKey] = { kind, files: [] };
       await writeManifest(pulseDir, manifest);

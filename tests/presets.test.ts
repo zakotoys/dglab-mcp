@@ -736,9 +736,15 @@ describe("syncPreset", () => {
   });
 
   it("skips an invalid direct pulse when requested", async () => {
-    const { origin } = await startHttpServer((_request, response) => response.end("not a pulse"));
+    let valid = true;
+    const { origin } = await startHttpServer((_request, response) =>
+      response.end(valid ? PULSE_A : "not a pulse"),
+    );
     const pulseDir = await makePulseDir();
 
+    await syncPreset(`${origin}/bad.pulse`, pulseDir);
+    await fs.rm(path.join(pulseDir, "bad.pulse"));
+    valid = false;
     await expect(
       syncPreset(`${origin}/bad.pulse`, pulseDir, { skipInvalid: true }),
     ).resolves.toMatchObject({
@@ -747,7 +753,10 @@ describe("syncPreset", () => {
       files: 0,
       skipped: 1,
     });
-    expect(await fs.readdir(pulseDir)).toEqual([]);
+    const manifest = JSON.parse(
+      await fs.readFile(path.join(pulseDir, PRESET_MANIFEST_FILE), "utf8"),
+    ) as { sources: Record<string, { files: unknown[] }> };
+    expect(manifest.sources[`${origin}/bad.pulse`]!.files).toHaveLength(1);
   });
 
   it("reports unsuccessful pulse downloads without creating cache state", async () => {
