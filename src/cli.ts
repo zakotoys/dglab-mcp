@@ -1,5 +1,6 @@
 export interface CliOptions {
   presetSources: string[];
+  skipInvalidPresets?: boolean;
 }
 
 export class CliArgumentError extends Error {
@@ -11,9 +12,14 @@ export class CliArgumentError extends Error {
 
 export function parseCliArgs(args: string[]): CliOptions {
   const presetSources: string[] = [];
+  let skipInvalidPresets = false;
 
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index]!;
+    if (argument === "--skip-invalid-presets") {
+      skipInvalidPresets = true;
+      continue;
+    }
     if (argument !== "-p" && argument !== "--preset") {
       throw new CliArgumentError(`unknown argument "${argument}"`);
     }
@@ -29,5 +35,5 @@ export function parseCliArgs(args: string[]): CliOptions {
     }
   }
 
-  return { presetSources };
+  return skipInvalidPresets ? { presetSources, skipInvalidPresets: true } : { presetSources };
 }

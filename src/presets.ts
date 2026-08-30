@@ -81,9 +81,18 @@ export interface PresetSyncResult {
   downloaded: number;
   reused: number;
   files: number;
+  skipped: number;
 }
 
-export async function syncPreset(sourceInput: string, pulseDir: string): Promise<PresetSyncResult> {
+export interface PresetSyncOptions {
+  skipInvalid?: boolean;
+}
+
+export async function syncPreset(
+  sourceInput: string,
+  pulseDir: string,
+  options: PresetSyncOptions = {},
+): Promise<PresetSyncResult> {
   const source = parseSource(sourceInput);
   const sourceKey = sourceKeyFor(source);
   await fs.mkdir(pulseDir, { recursive: true });
@@ -102,14 +111,17 @@ export async function syncPreset(sourceInput: string, pulseDir: string): Promise
       downloaded: 0,
       reused: cachedSource.files.length,
       files: cachedSource.files.length,
+      skipped: 0,
     };
   }
 
-  const { kind, files } = await discoverRemoteFiles(source);
+  const discovered = await discoverRemoteFiles(source, options);
+  const { kind, files } = discovered;
   const previousFiles = new Map(cachedSource?.files.map((file) => [file.url, file]) ?? []);
   const nextFiles: ManifestFile[] = [];
   const downloads: DownloadedFile[] = [];
   let reused = 0;
+  let skipped = discovered.skipped;
 
   for (const remoteFile of files) {
     const url = remoteFile.url.href;
@@ -127,7 +139,16 @@ export async function syncPreset(sourceInput: string, pulseDir: string): Promise
       continue;
     }
 
-    const content = remoteFile.content ?? (await downloadPulse(remoteFile.url));
+    let content: Buffer;
+    try {
+      content = remoteFile.content ?? (await downloadPulse(remoteFile.url));
+    } catch (error) {
+      if (!options.skipInvalid || !isInvalidPresetError(error)) {
+        throw error;
+      }
+      skipped += 1;
+      continue;
+    }
     const contentSha256 = sha256(content);
     if (targetIsCurrent && previous !== undefined && previous.sha256 === contentSha256) {
       nextFiles.push(previous);
@@ -160,8 +181,20 @@ export async function syncPreset(sourceInput: string, pulseDir: string): Promise
   }
 
   nextFiles.sort((a, b) => a.url.localeCompare(b.url));
+  if (nextFiles.length === 0 && options.skipInvalid) {
+    return {
+      sourceUrl: sourceKey,
+      downloaded: 0,
+      reused,
+      files: 0,
+      skipped,
+    };
+  }
   if (cachedSource?.kind === "directory") {
     await removeStaleManagedFiles(pulseDir, manifest, cachedSource, nextFiles);
+  }
+  if (nextFiles.length === 0) {
+    throw new Error(`preset ${sourceInput} contains no valid .pulse files`);
   }
   manifest.sources[sourceKey] = { kind, files: nextFiles };
   await writeManifest(pulseDir, manifest);
@@ -171,7 +204,12 @@ export async function syncPreset(sourceInput: string, pulseDir: string): Promise
     downloaded: downloads.length,
     reused,
     files: nextFiles.length,
+    skipped,
   };
+}
+
+function isInvalidPresetError(error: unknown): boolean {
+  return error instanceof Error && error.message.startsWith("invalid preset ");
 }
 
 function manifestPathReferenceCount(manifest: Manifest, managedPath: string): number {
@@ -312,23 +350,27 @@ async function manifestFileIsCurrent(pulseDir: string, file: ManifestFile): Prom
 
 async function discoverRemoteFiles(
   source: ParsedSource,
-): Promise<{ kind: "file" | "directory"; files: RemoteFile[] }> {
+  options: PresetSyncOptions,
+): Promise<{ kind: "file" | "directory"; files: RemoteFile[]; skipped: number }> {
   if (source.type === "local") {
-    return discoverLocalFiles(source.localPath!);
+    return { ...(await discoverLocalFiles(source.localPath!)), skipped: 0 };
   }
   if (source.type === "github") {
     const files = await discoverGitHubFiles(source);
-    return directoryResult(source.url, files);
+    return { ...directoryResult(source.url, files), skipped: 0 };
   }
   if (source.type === "gitlab") {
     const files = await discoverGitLabFiles(source);
-    return directoryResult(source.url, files);
+    return { ...directoryResult(source.url, files), skipped: 0 };
   }
   if (source.type === "well-known" || source.type === "download") {
-    return discoverHttpFiles(source);
+    return { ...(await discoverHttpFiles(source)), skipped: 0 };
   }
-  const files = await discoverGitFiles(source);
-  return directoryResult(source.url, files);
+  const result = await discoverGitFiles(source, options);
+  if (result.files.length === 0 && options.skipInvalid && result.skipped > 0) {
+    return { kind: "directory", files: [], skipped: result.skipped };
+  }
+  return { ...directoryResult(source.url, result.files), skipped: result.skipped };
 }
 
 function directoryResult(
@@ -411,7 +453,10 @@ async function discoverLocalFiles(
   return { kind: "directory", files };
 }
 
-async function discoverGitFiles(source: ParsedSource): Promise<RemoteFile[]> {
+async function discoverGitFiles(
+  source: ParsedSource,
+  options: PresetSyncOptions,
+): Promise<{ files: RemoteFile[]; skipped: number }> {
   const tempDir = await fs.mkdtemp(path.join(tmpdir(), "dglab-git-preset-"));
   try {
     const args = ["clone", "--depth", "1"];
@@ -428,14 +473,23 @@ async function discoverGitFiles(source: ParsedSource): Promise<RemoteFile[]> {
     /* c8 ignore next: enterprise git sources may provide a repository subpath. */
     const root = source.subpath === undefined ? tempDir : path.join(tempDir, source.subpath);
     const discovered = await discoverLocalFiles(root);
-    const files = await Promise.all(
-      discovered.files.map(async (file) => ({
-        url: gitSourceFileUrl(source, file.relativePath),
-        relativePath: file.relativePath,
-        content: await readLocalPulse(fileURLToPath(file.url), file.url.href),
-      })),
-    );
-    return files;
+    const files: RemoteFile[] = [];
+    let skipped = 0;
+    for (const file of discovered.files) {
+      try {
+        files.push({
+          url: gitSourceFileUrl(source, file.relativePath),
+          relativePath: file.relativePath,
+          content: await readLocalPulse(fileURLToPath(file.url), file.url.href),
+        });
+      } catch (error) {
+        if (!options.skipInvalid || !isInvalidPresetError(error)) {
+          throw error;
+        }
+        skipped += 1;
+      }
+    }
+    return { files, skipped };
   } catch (error) {
     throw new Error(`failed to fetch git preset ${source.url}: ${(error as Error).message}`);
   } finally {

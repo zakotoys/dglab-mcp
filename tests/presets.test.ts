@@ -669,6 +669,48 @@ describe("syncPreset", () => {
     });
   });
 
+  it("skips invalid remote pulse content when requested", async () => {
+    const { origin } = await startHttpServer((request, response) => {
+      if (request.url === "/library/") {
+        response.end('<a href="good.pulse">good</a><a href="bad.pulse">bad</a>');
+        return;
+      }
+      if (request.url === "/library/good.pulse") {
+        response.end(PULSE_A);
+        return;
+      }
+      if (request.url === "/library/bad.pulse") {
+        response.end("not a pulse");
+        return;
+      }
+      response.writeHead(404).end();
+    });
+    const pulseDir = await makePulseDir();
+
+    await expect(syncPreset(`${origin}/library/`, pulseDir)).rejects.toThrow(/invalid preset/);
+    const result = await syncPreset(`${origin}/library/`, pulseDir, { skipInvalid: true });
+    expect(result).toMatchObject({ downloaded: 1, reused: 0, files: 1, skipped: 1 });
+    expect(await fs.readFile(path.join(pulseDir, "good.pulse"), "utf8")).toBe(PULSE_A);
+    await expect(fs.stat(path.join(pulseDir, "bad.pulse"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("skips an invalid direct pulse when requested", async () => {
+    const { origin } = await startHttpServer((_request, response) => response.end("not a pulse"));
+    const pulseDir = await makePulseDir();
+
+    await expect(
+      syncPreset(`${origin}/bad.pulse`, pulseDir, { skipInvalid: true }),
+    ).resolves.toMatchObject({
+      downloaded: 0,
+      reused: 0,
+      files: 0,
+      skipped: 1,
+    });
+    expect(await fs.readdir(pulseDir)).toEqual([]);
+  });
+
   it("reports unsuccessful pulse downloads without creating cache state", async () => {
     const { origin } = await startHttpServer((_request, response) => response.writeHead(404).end());
     const pulseDir = await makePulseDir();

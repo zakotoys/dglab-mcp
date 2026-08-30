@@ -62,6 +62,10 @@ Claude Desktop、Cursor、OpenCode、Codex 或其他 MCP 客户端通过本地 s
 }
 ```
 
+默认情况下，只要下载到的任意 `.pulse` 文件格式无效，同步就会失败。
+添加 `--skip-invalid-presets` 后会忽略错误的波形，只导入来源中的有效文件。
+下载失败、响应过大和其他来源错误仍会导致同步失败。
+
 Windows 客户端需要时使用 `cmd`：
 
 ```json
