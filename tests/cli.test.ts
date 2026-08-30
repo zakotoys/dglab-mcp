@@ -12,6 +12,13 @@ describe("parseCliArgs", () => {
     expect(parseCliArgs([])).toEqual({ presetSources: [] });
   });
 
+  it("accepts the invalid preset skip flag", () => {
+    expect(parseCliArgs(["--skip-invalid-presets", "--preset", "owner/repo/pulses"])).toEqual({
+      presetSources: ["owner/repo/pulses"],
+      skipInvalidPresets: true,
+    });
+  });
+
   it("collects multiple sources in argument order", () => {
     expect(
       parseCliArgs([

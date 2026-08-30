@@ -66,6 +66,11 @@ and its source. For example, this imports a GitHub tree recursively:
 }
 ```
 
+By default, synchronization fails when any downloaded `.pulse` file is invalid.
+Add `--skip-invalid-presets` to ignore invalid waveform files and import only the
+valid files from each source. Download failures, oversized responses, and other
+source errors still fail the synchronization.
+
 For Windows clients that require it, use `cmd`:
 
 ```json

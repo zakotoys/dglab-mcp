@@ -669,6 +669,96 @@ describe("syncPreset", () => {
     });
   });
 
+  it("skips invalid remote pulse content when requested", async () => {
+    const { origin } = await startHttpServer((request, response) => {
+      if (request.url === "/library/") {
+        response.end('<a href="good.pulse">good</a><a href="bad.pulse">bad</a>');
+        return;
+      }
+      if (request.url === "/library/good.pulse") {
+        response.end(PULSE_A);
+        return;
+      }
+      if (request.url === "/library/bad.pulse") {
+        response.end("not a pulse");
+        return;
+      }
+      response.writeHead(404).end();
+    });
+    const pulseDir = await makePulseDir();
+
+    await expect(syncPreset(`${origin}/library/`, pulseDir)).rejects.toThrow(/invalid preset/);
+    const result = await syncPreset(`${origin}/library/`, pulseDir, { skipInvalid: true });
+    expect(result).toMatchObject({ downloaded: 1, reused: 0, files: 1, skipped: 1 });
+    expect(await fs.readFile(path.join(pulseDir, "good.pulse"), "utf8")).toBe(PULSE_A);
+    await expect(fs.stat(path.join(pulseDir, "bad.pulse"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("cleans a cached directory when every pulse becomes invalid", async () => {
+    let includeValid = true;
+    const { origin } = await startHttpServer((request, response) => {
+      if (request.url === "/library/") {
+        response.end(
+          includeValid ? '<a href="wave.pulse">wave</a>' : '<a href="invalid.pulse">invalid</a>',
+        );
+        return;
+      }
+      if (request.url === "/library/wave.pulse") {
+        response.end(PULSE_A);
+        return;
+      }
+      if (request.url === "/library/invalid.pulse") {
+        response.end("not a pulse");
+        return;
+      }
+      response.writeHead(404).end();
+    });
+    const pulseDir = await makePulseDir();
+    const source = `${origin}/library/`;
+
+    await expect(syncPreset(source, pulseDir)).resolves.toMatchObject({ files: 1 });
+    includeValid = false;
+    await expect(syncPreset(source, pulseDir, { skipInvalid: true })).resolves.toMatchObject({
+      downloaded: 0,
+      reused: 0,
+      files: 0,
+      skipped: 1,
+    });
+    await expect(fs.stat(path.join(pulseDir, "wave.pulse"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    const manifest = JSON.parse(
+      await fs.readFile(path.join(pulseDir, PRESET_MANIFEST_FILE), "utf8"),
+    ) as { sources: Record<string, { files: unknown[] }> };
+    expect(manifest.sources[source]!.files).toEqual([]);
+  });
+
+  it("skips an invalid direct pulse when requested", async () => {
+    let valid = true;
+    const { origin } = await startHttpServer((_request, response) =>
+      response.end(valid ? PULSE_A : "not a pulse"),
+    );
+    const pulseDir = await makePulseDir();
+
+    await syncPreset(`${origin}/bad.pulse`, pulseDir);
+    await fs.rm(path.join(pulseDir, "bad.pulse"));
+    valid = false;
+    await expect(
+      syncPreset(`${origin}/bad.pulse`, pulseDir, { skipInvalid: true }),
+    ).resolves.toMatchObject({
+      downloaded: 0,
+      reused: 0,
+      files: 0,
+      skipped: 1,
+    });
+    const manifest = JSON.parse(
+      await fs.readFile(path.join(pulseDir, PRESET_MANIFEST_FILE), "utf8"),
+    ) as { sources: Record<string, { files: unknown[] }> };
+    expect(manifest.sources[`${origin}/bad.pulse`]!.files).toHaveLength(1);
+  });
+
   it("reports unsuccessful pulse downloads without creating cache state", async () => {
     const { origin } = await startHttpServer((_request, response) => response.writeHead(404).end());
     const pulseDir = await makePulseDir();
@@ -766,6 +856,53 @@ describe("syncPreset", () => {
       reused: 0,
       files: 1,
     });
+  });
+
+  it("skips invalid files from a git source", async () => {
+    const repoDir = await fs.mkdtemp(path.join(os.tmpdir(), "dglab-git-invalid-test-"));
+    tmpDirs.push(repoDir);
+    await execFile("git", ["init", "-q", "-b", "main", repoDir]);
+    await fs.writeFile(path.join(repoDir, "invalid.pulse"), "not a pulse");
+    await execFile("git", ["-C", repoDir, "add", "invalid.pulse"]);
+    await execFile("git", [
+      "-C",
+      repoDir,
+      "-c",
+      "user.email=test@example.com",
+      "-c",
+      "user.name=test",
+      "commit",
+      "-qm",
+      "initial",
+    ]);
+
+    const pulseDir = await makePulseDir();
+    await expect(
+      syncPreset(`file://${repoDir}#main`, pulseDir, { skipInvalid: true }),
+    ).resolves.toMatchObject({
+      downloaded: 0,
+      reused: 0,
+      files: 0,
+      skipped: 1,
+    });
+    expect(await fs.readdir(pulseDir)).toEqual([]);
+
+    await fs.writeFile(path.join(repoDir, "oversized.pulse"), "x".repeat(64 * 1024 + 1));
+    await execFile("git", ["-C", repoDir, "add", "oversized.pulse"]);
+    await execFile("git", [
+      "-C",
+      repoDir,
+      "-c",
+      "user.email=test@example.com",
+      "-c",
+      "user.name=test",
+      "commit",
+      "-qm",
+      "oversized",
+    ]);
+    await expect(
+      syncPreset(`file://${repoDir}#main`, pulseDir, { skipInvalid: true }),
+    ).rejects.toThrow(/failed to fetch git preset/);
   });
 
   it("rejects invalid local files and empty or oversized directories", async () => {
