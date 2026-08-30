@@ -1,5 +1,5 @@
 export interface CliOptions {
-  presetSource?: string;
+  presetSources: string[];
 }
 
 export class CliArgumentError extends Error {
@@ -10,25 +10,24 @@ export class CliArgumentError extends Error {
 }
 
 export function parseCliArgs(args: string[]): CliOptions {
-  let presetSource: string | undefined;
+  const presetSources: string[] = [];
 
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index]!;
     if (argument !== "-p" && argument !== "--preset") {
       throw new CliArgumentError(`unknown argument "${argument}"`);
     }
-    if (presetSource !== undefined) {
-      throw new CliArgumentError("--preset may only be specified once");
-    }
 
-    const value = args[index + 1];
-    if (value === undefined || value.startsWith("-")) {
+    let valuesAdded = 0;
+    while (index + 1 < args.length && !args[index + 1]!.startsWith("-")) {
+      presetSources.push(args[index + 1]!);
+      index += 1;
+      valuesAdded += 1;
+    }
+    if (valuesAdded === 0) {
       throw new CliArgumentError(`${argument} requires a source`);
     }
-    index += 1;
-
-    presetSource = value;
   }
 
-  return { presetSource };
+  return { presetSources };
 }

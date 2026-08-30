@@ -196,7 +196,7 @@ The directory is rescanned recursively on every list/play call. Files are limite
 to 64 KiB, and the catalog accepts at most 100 files. Names match built-in ids and
 labels case- and separator-insensitively, but matching is exact rather than fuzzy.
 
-At startup, `--preset <source>` or `-p <source>` uses the same source grammar as
+At startup, `--preset <source>...` or `-p <source>...` uses the same source grammar as
 `npx skills`: local paths, GitHub/GitLab repository or tree sources, GitHub
 shorthand (`owner/repo`), direct `.pulse` downloads, and well-known HTTP(S)
 directory listings. GitHub and GitLab repository trees are traversed through
@@ -204,8 +204,10 @@ their repository APIs; generic HTTP directories are crawled recursively on the
 same origin. Relative subdirectories are preserved. Direct git clone sources
 are supported for repositories containing `.pulse` files. Hosted archive URLs
 are recognized as download sources but are not extracted; use a direct `.pulse`
-URL instead. The server writes `manifest.json` in `DGLAB_PULSE_DIR` with each
-source, local path, and SHA-256 hash. On later starts, a source whose local
+URL instead. Multiple sources are synchronized sequentially in the order given;
+repeat `--preset`/`-p` to append more sources. The server writes `manifest.json`
+in `DGLAB_PULSE_DIR` with each source, local path, and SHA-256 hash. On later
+starts, a source whose local
 files still match the manifest is used without another network request; missing
 or modified managed files are downloaded again. Download and cache diagnostics
 go to stderr so stdout remains exclusively available to MCP JSON-RPC.
