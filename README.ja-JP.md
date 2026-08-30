@@ -188,12 +188,13 @@ stdio で接続し、`dglab_connect` を呼び出すとペアリング QR コー
 一覧または再生を呼び出すたびに再帰的にスキャンします。1 ファイルは 64 KiB 以下、カタログは最大 100 ファイルです。
 名前は大文字小文字と区切り文字を区別しない完全一致で、あいまい検索は行いません。
 
-起動時に `--preset <source>` または `-p <source>` を指定すると、`npx skills` と同じソース形式を
+起動時に `--preset <source>...` または `-p <source>...` を指定すると、`npx skills` と同じソース形式を
 使用できます。ローカルパス、GitHub/GitLab リポジトリまたは tree、GitHub の短縮形（`owner/repo`）、
 直接の `.pulse` ダウンロード、HTTP(S) ディレクトリ一覧に対応します。GitHub と GitLab のリポジトリツリーは
 各 API で走査され、通常の HTTP ディレクトリは同一オリジン内で再帰的にクロールされます。`.pulse` を含む
 直接 git clone ソースにも対応します。アーカイブ URL は download ソースとして認識されますが展開されないため、直接の
-`.pulse` URL を指定してください。`DGLAB_PULSE_DIR` 内の `manifest.json` には、ソース、ローカルパス、
+`.pulse` URL を指定してください。複数のソースはコマンドラインの順序で順番に同期され、
+`--preset`/`-p` を繰り返して追加できます。`DGLAB_PULSE_DIR` 内の `manifest.json` には、ソース、ローカルパス、
 SHA-256 ハッシュが記録されます。次回以降はローカルファイルが manifest と一致すれば
 ネットワークリクエストを行わず、欠落または変更された管理対象ファイルだけを再ダウンロード
 します。診断は stderr にのみ出力されるため、stdout は MCP JSON-RPC 専用のままです。

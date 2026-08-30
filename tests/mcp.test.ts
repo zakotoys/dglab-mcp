@@ -278,22 +278,35 @@ describe("dglab-mcp stdio subprocess", () => {
     const relay = new FakeV4Relay();
     const url = await relay.start();
     const pulseDir = await fs.mkdtemp(path.join(os.tmpdir(), "dglab-stdio-pulses-"));
-    let presetRequests = 0;
-    const presetServer = createServer((_request, response) => {
-      presetRequests += 1;
-      response.end("Dungeonlab+pulse:Stdio=0,0,0,1,1/10-0,50-100");
+    const presetRequests: string[] = [];
+    let activePresetRequests = 0;
+    let maxConcurrentPresetRequests = 0;
+    const presetServer = createServer((request, response) => {
+      presetRequests.push(request.url ?? "");
+      activePresetRequests += 1;
+      maxConcurrentPresetRequests = Math.max(maxConcurrentPresetRequests, activePresetRequests);
+      const label = request.url?.includes("second") ? "Second" : "First";
+      setTimeout(() => {
+        activePresetRequests -= 1;
+        response.end(`Dungeonlab+pulse:${label}=0,0,0,1,1/10-0,50-100`);
+      }, 30);
     });
     await new Promise<void>((resolve) => presetServer.listen(0, "127.0.0.1", resolve));
     const presetAddress = presetServer.address();
     if (typeof presetAddress !== "object" || presetAddress === null) {
       throw new Error("preset test server has no TCP address");
     }
-    const presetSource = `http://127.0.0.1:${presetAddress.port}/stdio.pulse`;
+    const firstPresetSource = `http://127.0.0.1:${presetAddress.port}/first.pulse`;
+    const secondPresetSource = `http://127.0.0.1:${presetAddress.port}/second.pulse`;
     try {
-      const child = spawn(process.execPath, [SERVER_ENTRY, "-p", presetSource], {
-        env: { ...process.env, DGLAB_RELAY_URL: url, DGLAB_PULSE_DIR: pulseDir },
-        stdio: ["pipe", "pipe", "pipe"],
-      });
+      const child = spawn(
+        process.execPath,
+        [SERVER_ENTRY, "--preset", firstPresetSource, secondPresetSource],
+        {
+          env: { ...process.env, DGLAB_RELAY_URL: url, DGLAB_PULSE_DIR: pulseDir },
+          stdio: ["pipe", "pipe", "pipe"],
+        },
+      );
       const stdout: string[] = [];
       const stderr: string[] = [];
       child.stdout.on("data", (chunk) => stdout.push(String(chunk)));
@@ -337,13 +350,17 @@ describe("dglab-mcp stdio subprocess", () => {
         (toolsResponse as { result?: { tools?: unknown[] } })?.result?.tools?.length ?? 0,
       );
       expect(toolCount).toBe(11);
-      expect(presetRequests).toBe(1);
-      expect(await fs.readFile(path.join(pulseDir, "stdio.pulse"), "utf8")).toContain(
-        "Dungeonlab+pulse:Stdio",
+      expect(presetRequests).toEqual(["/first.pulse", "/second.pulse"]);
+      expect(maxConcurrentPresetRequests).toBe(1);
+      expect(await fs.readFile(path.join(pulseDir, "first.pulse"), "utf8")).toContain(
+        "Dungeonlab+pulse:First",
       );
-      expect(await fs.readFile(path.join(pulseDir, "manifest.json"), "utf8")).toContain(
-        presetSource,
+      expect(await fs.readFile(path.join(pulseDir, "second.pulse"), "utf8")).toContain(
+        "Dungeonlab+pulse:Second",
       );
+      const manifest = await fs.readFile(path.join(pulseDir, "manifest.json"), "utf8");
+      expect(manifest).toContain(firstPresetSource);
+      expect(manifest).toContain(secondPresetSource);
       expect(stderr.join("")).toContain("dglab-mcp");
     } finally {
       await new Promise<void>((resolve, reject) =>
