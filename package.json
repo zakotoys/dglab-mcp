@@ -54,9 +54,9 @@
     "@types/node": "^24.0.0",
     "@types/qrcode": "^1.5.5",
     "@types/ws": "^8.18.1",
-    "@vitest/coverage-v8": "^4.1.11",
+    "@vitest/coverage-v8": "^5.0.0",
     "typescript": "^7.0.0",
-    "vitest": "^4.1.11",
+    "vitest": "^5.0.0",
     "ws": "^8.21.0"
   }
 }
